@@ -1,0 +1,10 @@
+{
+  "entity": {
+    "light": { "all_zones": { "default": "mdi:home-lightbulb-outline" } },
+    "select": { "pattern": { "default": "mdi:palette" } },
+    "button": { "refresh": { "default": "mdi:refresh" } }
+  },
+  "services": {
+    "apply_light_string": { "service": "mdi:led-strip-variant" }
+  }
+}

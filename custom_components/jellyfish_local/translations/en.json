@@ -1,0 +1,53 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to a JellyFish controller",
+        "description": "Give the controller a fixed IP address (DHCP reservation) so it can always be found.",
+        "data": { "host": "Host" },
+        "data_description": { "host": "IP address or hostname of the JellyFish controller on your network." }
+      },
+      "reconfigure": {
+        "title": "Change controller address",
+        "data": { "host": "Host" },
+        "data_description": { "host": "New IP address or hostname of the same JellyFish controller." }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach a JellyFish controller at that address. Check the IP, and close the JellyFish app on your phone if it's open (the controller only allows one connection at a time).",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This controller is already set up.",
+      "reconfigure_successful": "The controller address was updated.",
+      "wrong_device": "That address belongs to a different JellyFish controller."
+    }
+  },
+  "entity": {
+    "light": {
+      "all_zones": { "name": "All zones" }
+    },
+    "select": {
+      "pattern": { "name": "{zone} pattern" }
+    },
+    "button": {
+      "refresh": { "name": "Refresh patterns and zones" }
+    }
+  },
+  "services": {
+    "apply_light_string": {
+      "name": "Apply light string",
+      "description": "Paint a repeating sequence of colors along one or more JellyFish zones.",
+      "fields": {
+        "colors": {
+          "name": "Colors",
+          "description": "List of RGB colors, e.g. [[255, 0, 0], [255, 255, 255]]. The sequence repeats along the zone."
+        },
+        "brightness_pct": {
+          "name": "Brightness",
+          "description": "Brightness in percent (1-100)."
+        }
+      }
+    }
+  }
+}

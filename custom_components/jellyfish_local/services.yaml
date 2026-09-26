@@ -1,0 +1,18 @@
+apply_light_string:
+  target:
+    entity:
+      integration: jellyfish_local
+      domain: light
+  fields:
+    colors:
+      required: true
+      example: "[[255, 0, 0], [255, 255, 255]]"
+      selector:
+        object:
+    brightness_pct:
+      default: 100
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
