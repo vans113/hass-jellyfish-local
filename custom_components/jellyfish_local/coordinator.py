@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -118,11 +119,15 @@ class JellyFishCoordinator(DataUpdateCoordinator[ControllerData]):
     @callback
     def _sync_device(self) -> None:
         """Keep name and firmware on the device page current."""
-        registry = dr.async_get(self.hass)
-        device = registry.async_get_device(identifiers={(DOMAIN, self.unique_id)})
-        data = self.client.data
-        if device and (device.sw_version != data.firmware):
-            registry.async_update_device(device.id, sw_version=data.firmware)
+        if self.config_entry.state is not ConfigEntryState.LOADED:
+            return  # setup creates the device with the current firmware
+        # get_or_create looks the device up by identifier and updates
+        # sw_version in place (async_get_device is deprecated as of 2026.x).
+        dr.async_get(self.hass).async_get_or_create(
+            config_entry_id=self.config_entry.entry_id,
+            identifiers={(DOMAIN, self.unique_id)},
+            sw_version=self.client.data.firmware,
+        )
 
     @callback
     def _sync_zones(self) -> None:
