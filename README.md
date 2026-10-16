@@ -54,7 +54,7 @@ Pattern names are `Folder/Name`, exactly as they appear in the JellyFish app.
 
 ### HACS (custom repository)
 
-1. HACS → ⋮ → **Custom repositories** → add `https://github.com/OWNER/hass-jellyfish-local`, category **Integration**.
+1. HACS → ⋮ → **Custom repositories** → add `https://github.com/vans113/hass-jellyfish-local`, category **Integration**.
 2. Download **JellyFish Local**, then restart Home Assistant.
 3. **Settings → Devices & services → Add integration → JellyFish Local**, and enter the controller's IP address.
 

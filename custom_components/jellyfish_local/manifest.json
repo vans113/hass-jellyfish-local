@@ -1,12 +1,14 @@
 {
   "domain": "jellyfish_local",
   "name": "JellyFish Local",
-  "codeowners": [],
+  "codeowners": [
+    "@vans113"
+  ],
   "config_flow": true,
-  "documentation": "https://github.com/OWNER/hass-jellyfish-local",
+  "documentation": "https://github.com/vans113/hass-jellyfish-local",
   "integration_type": "device",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/OWNER/hass-jellyfish-local/issues",
+  "issue_tracker": "https://github.com/vans113/hass-jellyfish-local/issues",
   "requirements": [],
   "version": "0.1.0"
 }
