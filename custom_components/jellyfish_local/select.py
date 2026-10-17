@@ -74,7 +74,13 @@ class JellyFishPatternSelect(JellyFishZoneEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         if option == self._running:
             return  # already playing
-        await self._command(self.coordinator.client.apply_pattern(option, [self.zone]))
+        # Keep whatever brightness the zone is at, rather than letting the new
+        # pattern jump to its own saved level.
+        state = self.coordinator.client.data.zone_states.get(self.zone)
+        level = state.brightness if state and state.is_on and state.brightness else None
+        await self._command(
+            self.coordinator.client.apply_pattern(option, [self.zone], brightness=level)
+        )
 
 
 class JellyFishTweakSelect(JellyFishZoneEntity, SelectEntity):

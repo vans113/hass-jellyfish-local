@@ -230,6 +230,39 @@ async def test_brightness_keeps_running_pattern(
     assert cmd["file"] == "Christmas/Candy Cane"
 
 
+async def test_switching_look_keeps_current_brightness(
+    hass: HomeAssistant, setup, fake: FakeController
+) -> None:
+    # Dim a running look, then pick a different look with no brightness given:
+    # it should stay at the current level, not jump to the pattern's own.
+    await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Christmas/Candy Cane"})
+    await call(hass, "turn_on", FRONT, **{ATTR_BRIGHTNESS: 64})  # 25 %
+    assert hass.states.get(FRONT).attributes[ATTR_BRIGHTNESS] == 64
+    await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Halloween/Spooky"})
+    state = hass.states.get(FRONT)
+    assert state.attributes[ATTR_EFFECT] == "Halloween/Spooky"
+    assert state.attributes[ATTR_BRIGHTNESS] == 64  # held, not 100 %
+    data = json.loads(fake.sent_commands()[-1]["runPattern"]["data"])
+    assert data["runData"]["brightness"] == 25
+
+
+async def test_select_pattern_keeps_current_brightness(
+    hass: HomeAssistant, setup, fake: FakeController
+) -> None:
+    await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Christmas/Candy Cane"})
+    await call(hass, "turn_on", FRONT, **{ATTR_BRIGHTNESS: 64})  # 25 %
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {ATTR_ENTITY_ID: SELECT_FRONT, "option": "Halloween/Spooky"},
+        blocking=True,
+    )
+    await settle(hass)
+    assert hass.states.get(FRONT).attributes[ATTR_BRIGHTNESS] == 64
+    data = json.loads(fake.sent_commands()[-1]["runPattern"]["data"])
+    assert data["runData"]["brightness"] == 25
+
+
 async def test_turn_off_and_resume(hass: HomeAssistant, setup, fake: FakeController) -> None:
     await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Halloween/Spooky"})
     await call(hass, "turn_off", FRONT)

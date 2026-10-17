@@ -10,7 +10,7 @@
  *   folders: [Colors, Halloween]       # optional: only show these folders
  *   save_folder: Home Assistant        # optional
  */
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 
 const PALETTE = [
   "#ffbe6e", "#ffffff", "#ff0000", "#ff3200", "#ff6400", "#ffc828",

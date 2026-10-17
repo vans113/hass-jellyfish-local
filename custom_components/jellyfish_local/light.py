@@ -231,7 +231,12 @@ class _JellyFishLight(LightEntity):
             elif not self.is_on:
                 await self._command(client.turn_on(zones))
         elif effect and effect != EFFECT_OFF:
-            await self._command(client.apply_pattern(effect, zones, brightness=pct))
+            # Keep the current brightness when switching looks instead of
+            # letting the pattern jump back to its own saved level. Only fall
+            # back to the pattern's brightness when nothing is lit to read.
+            current = self.brightness
+            level = pct if pct is not None else (to_percent(current) if current else None)
+            await self._command(client.apply_pattern(effect, zones, brightness=level))
         elif rgb is not None:
             current = self.brightness
             level = pct or (to_percent(current) if current else 100)
