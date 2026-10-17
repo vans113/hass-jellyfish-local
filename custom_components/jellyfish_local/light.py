@@ -14,12 +14,13 @@ from homeassistant.components.light import (
     LightEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 import voluptuous as vol
 
 from . import JellyFishConfigEntry
-from .client import ZoneState
+from .client import ZoneState, running_label
 from .const import ATTR_BRIGHTNESS_PCT, ATTR_COLORS, SERVICE_APPLY_LIGHT_STRING
 from .coordinator import JellyFishCoordinator
 from .entity import JellyFishEntity, JellyFishZoneEntity
@@ -110,22 +111,43 @@ class _JellyFishLight(LightEntity):
         return None
 
     @property
+    def _running(self) -> set[str]:
+        patterns = self.coordinator.client.data.patterns
+        return {label for s in self._states if (label := running_label(s, patterns))}
+
+    @property
     def effect(self) -> str | None:
-        files = {s.file for s in self._states if s.is_on}
-        if len(files) == 1 and (file := files.pop()):
-            return file
+        running = self._running
+        if len(running) == 1 and len({s.file for s in self._states if s.is_on}) == 1:
+            return running.pop()
         return EFFECT_OFF if self.is_on else None
 
     @property
     def effect_list(self) -> list[str]:
-        return [EFFECT_OFF, *self.coordinator.client.data.patterns]
+        patterns = self.coordinator.client.data.patterns
+        custom = sorted(r for r in self._running if r not in patterns)
+        return [EFFECT_OFF, *custom, *patterns]
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         states = self._states
-        if len(states) == 1:
-            return {"pattern_type": states[0].pattern_type, "activated_by": states[0].activated_by}
-        return {}
+        if len(states) != 1:
+            return {}
+        attrs: dict[str, Any] = {
+            "pattern_type": states[0].pattern_type,
+            "activated_by": states[0].activated_by,
+        }
+        if len(self._zones) == 1:
+            zone = self.coordinator.client.data.zones.get(self._zones[0]) or {}
+            attrs["pixels"] = zone.get("numPixels")
+            attrs["outputs"] = [
+                {
+                    "port": pm.get("phyPort"),
+                    "pixels": abs(pm.get("phyEndIdx", 0) - pm.get("phyStartIdx", 0)) + 1,
+                }
+                for pm in zone.get("portMap") or []
+            ]
+        return attrs
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         client = self.coordinator.client
@@ -134,7 +156,16 @@ class _JellyFishLight(LightEntity):
         effect = kwargs.get(ATTR_EFFECT)
         rgb = kwargs.get(ATTR_RGB_COLOR)
 
-        if effect and effect != EFFECT_OFF:
+        if effect and effect != EFFECT_OFF and effect not in client.data.patterns:
+            # An app-made custom pattern can't be re-sent by name; it can only
+            # be the one already playing, so just resume/adjust it.
+            if effect not in self._running:
+                raise ServiceValidationError(f"Unknown pattern: {effect}")
+            if pct is not None:
+                await self._command(client.set_brightness(pct, zones))
+            elif not self.is_on:
+                await self._command(client.turn_on(zones))
+        elif effect and effect != EFFECT_OFF:
             await self._command(client.apply_pattern(effect, zones, brightness=pct))
         elif rgb is not None:
             current = self.brightness

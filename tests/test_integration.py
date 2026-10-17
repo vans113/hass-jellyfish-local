@@ -374,3 +374,90 @@ async def test_diagnostics(hass: HomeAssistant, setup) -> None:
     assert diag["entry"][CONF_HOST] == "**REDACTED**"
     assert diag["connected"] is True
     assert set(diag["controller"]["zones"]) == {"Front", "Back"}
+
+
+CUSTOM_DATA = json.dumps(
+    {
+        "type": "Color",
+        "colors": [255, 201, 80, 255, 49, 0],
+        "spaceBetweenPixels": 1,
+        "effectBetweenPixels": "No Color Transform",
+        "colorPos": [],
+        "skip": 1,
+        "numOfLeds": 1,
+        "runData": {
+            "speed": 10,
+            "brightness": 23,
+            "effect": "None",
+            "effectValue": 0,
+            "rgbAdj": [100, 100, 100],
+        },
+        "direction": "",
+    }
+)
+
+
+async def _push_custom(hass, fake):
+    # Exactly what firmware 4.6.1 reported for a color made in the JellyFish app.
+    await fake.push_state(
+        "Front",
+        state=1,
+        file="_JF-CUSTOM/Custom Color",
+        data=CUSTOM_DATA,
+        activatedBy="network_command",
+    )
+    await settle(hass)
+
+
+async def test_app_custom_pattern_is_not_unknown(
+    hass: HomeAssistant, setup, fake: FakeController
+) -> None:
+    await _push_custom(hass, fake)
+    select = hass.states.get(SELECT_FRONT)
+    assert select.state == "Custom: Custom Color"
+    assert select.attributes["options"][0] == "Custom: Custom Color"
+    light = hass.states.get(FRONT)
+    assert light.attributes[ATTR_EFFECT] == "Custom: Custom Color"
+    assert "Custom: Custom Color" in light.attributes[ATTR_EFFECT_LIST]
+    assert light.attributes[ATTR_BRIGHTNESS] == 59  # 23 %
+
+
+async def test_dimming_app_custom_pattern_keeps_it(
+    hass: HomeAssistant, setup, fake: FakeController
+) -> None:
+    await _push_custom(hass, fake)
+    await call(hass, "turn_on", FRONT, **{ATTR_BRIGHTNESS: 128})
+    cmd = fake.sent_commands()[-1]["runPattern"]
+    data = json.loads(cmd["data"])
+    assert data["colors"] == [255, 201, 80, 255, 49, 0]
+    assert data["runData"]["brightness"] == 50
+    assert hass.states.get(FRONT).attributes[ATTR_BRIGHTNESS] == 128
+
+
+async def test_reselecting_custom_is_noop(hass: HomeAssistant, setup, fake: FakeController) -> None:
+    await _push_custom(hass, fake)
+    before = len(fake.sent_commands())
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {ATTR_ENTITY_ID: SELECT_FRONT, "option": "Custom: Custom Color"},
+        blocking=True,
+    )
+    await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Custom: Custom Color"})
+    assert len(fake.sent_commands()) == before
+    # Picking a saved pattern afterwards still works and drops the custom entry.
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {ATTR_ENTITY_ID: SELECT_FRONT, "option": "Halloween/Spooky"},
+        blocking=True,
+    )
+    await settle(hass)
+    assert hass.states.get(SELECT_FRONT).state == "Halloween/Spooky"
+    assert "Custom: Custom Color" not in hass.states.get(SELECT_FRONT).attributes["options"]
+
+
+async def test_outputs_attribute(hass: HomeAssistant, setup) -> None:
+    attrs = hass.states.get(FRONT).attributes
+    assert attrs["pixels"] == 120
+    assert attrs["outputs"] == [{"port": 1, "pixels": 120}]

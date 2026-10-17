@@ -116,6 +116,22 @@ class ControllerData:
     pattern_configs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
+def custom_label(file: str) -> str:
+    """Display name for something playing that isn't a saved pattern.
+
+    The JellyFish app runs ad-hoc colors/effects as e.g. "_JF-CUSTOM/Custom Color";
+    those never appear in the pattern list.
+    """
+    return f"Custom: {file.rpartition('/')[2] or file}"
+
+
+def running_label(state: ZoneState | None, patterns: list[str]) -> str | None:
+    """What a lit zone is showing, as offered in effect/option lists."""
+    if state is None or not state.is_on or not state.file:
+        return None
+    return state.file if state.file in patterns else custom_label(state.file)
+
+
 def _decode_embedded(value: Any) -> Any:
     """Decode a JSON-in-a-string field; '' or None become {}."""
     if isinstance(value, str):
@@ -548,7 +564,7 @@ class JellyFishClient:
         plan: dict[str, tuple[str, Any]] = {}
         for zone in self._zones(zones):
             state = self.data.zone_states.get(zone) or ZoneState()
-            if state.file:
+            if state.file and state.file in self.data.patterns:
                 key = f"file:{state.file}"
                 plan[key] = ("file", state.file)
             elif state.config.get("type"):
