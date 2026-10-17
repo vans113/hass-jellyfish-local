@@ -16,3 +16,104 @@ apply_light_string:
           min: 1
           max: 100
           unit_of_measurement: "%"
+
+run_pattern:
+  target:
+    entity:
+      integration: jellyfish_local
+      domain: light
+  fields:
+    colors:
+      required: true
+      example: "[[255, 100, 0], [128, 0, 128]]"
+      selector:
+        object:
+    pattern_type:
+      default: Color
+      selector:
+        select:
+          options: [Color, Chase, Paint, Stacker, Sequence, Multi-Paint]
+    speed:
+      example: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+    direction:
+      default: Center
+      selector:
+        select:
+          options: [Left, Center, Right]
+    spacing:
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 50
+          mode: box
+    effect_between:
+      default: No Color Transform
+      selector:
+        select:
+          options: [No Color Transform, Repeat, Progression, Fade, Fill with Black]
+    brightness_pct:
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+
+adjust_pattern:
+  target:
+    entity:
+      integration: jellyfish_local
+      domain: light
+  fields:
+    colors:
+      selector:
+        object:
+    pattern_type:
+      selector:
+        select:
+          options: [Color, Chase, Paint, Stacker, Sequence, Multi-Paint]
+    speed:
+      selector:
+        number:
+          min: 1
+          max: 100
+    direction:
+      selector:
+        select:
+          options: [Left, Center, Right]
+    spacing:
+      selector:
+        number:
+          min: 0
+          max: 50
+          mode: box
+    effect_between:
+      selector:
+        select:
+          options: [No Color Transform, Repeat, Progression, Fade, Fill with Black]
+    brightness_pct:
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+
+save_pattern:
+  target:
+    entity:
+      integration: jellyfish_local
+      domain: light
+  fields:
+    name:
+      required: true
+      example: "Wife's Halloween"
+      selector:
+        text:
+    folder:
+      default: Home Assistant
+      selector:
+        text:

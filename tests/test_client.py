@@ -193,3 +193,80 @@ async def test_set_brightness_on_unknown_zone_uses_warm_white(client, fake):
     await client.refresh_all()
     await client.set_brightness(50, ["Front"])
     assert client.data.zone_states["Front"].rgb == (255, 180, 110)
+
+
+async def test_run_custom_and_adjust(client, fake):
+    from custom_components.jellyfish_local.patterns import build_config
+
+    await client.connect()
+    await client.refresh_all()
+    cfg = build_config("Chase", [[255, 0, 0], [0, 0, 255]], 80, speed=100, direction="Left")
+    await client.run_custom(cfg, ["Front"])
+    sent = json.loads(fake.sent_commands()[-1]["runPattern"]["data"])
+    assert sent["type"] == "Chase" and sent["runData"]["speed"] == 1  # UI 100 = fastest = wire 1
+    assert set(sent) >= {
+        "spaceBetweenPixels",
+        "effectBetweenPixels",
+        "numOfLeds",
+        "skip",
+        "direction",
+    }
+    await client.adjust(["Front"], speed=1, pattern_type="Paint")
+    sent = json.loads(fake.sent_commands()[-1]["runPattern"]["data"])
+    assert sent["type"] == "Paint" and sent["runData"]["speed"] == 100
+    assert sent["colors"] == [255, 0, 0, 0, 0, 255] and sent["runData"]["brightness"] == 80
+
+
+async def test_adjust_saved_pattern_fetches_its_config(client, fake):
+    await client.connect()
+    await client.refresh_all()
+    await client.apply_pattern("Halloween/Spooky", ["Back"])
+    await client.adjust(["Back"], direction="Left")
+    cmd = fake.sent_commands()[-1]["runPattern"]
+    data = json.loads(cmd["data"])
+    assert cmd["file"] == "Halloween/Spooky"
+    assert data["type"] == "Stacker" and data["direction"] == "Left"
+    assert data["colors"] == [255, 100, 0, 128, 0, 128]
+
+
+async def test_save_pattern(client, fake):
+    from custom_components.jellyfish_local.patterns import build_config
+
+    await client.connect()
+    await client.refresh_all()
+    await client.run_custom(build_config("Color", [[1, 2, 3]], 50), ["Front"])
+    key = await client.save_running("Wife Pick", "Home Assistant", "Front")
+    assert key == "Home Assistant/Wife Pick"
+    assert fake.pattern_configs[key]["colors"] == [1, 2, 3]
+    assert key in client.data.patterns
+    with pytest.raises(ValueError):
+        await client.save_pattern("bad/name", "x", {})
+
+
+async def test_batch_pattern_configs(client, fake):
+    await client.connect()
+    await client.refresh_all()
+    configs = await client.get_pattern_configs(chunk=2)
+    assert set(configs) == set(fake.pattern_configs)
+    assert configs["Christmas/Candy Cane"]["type"] == "Chase"
+    sent = [
+        m
+        for m in fake.received
+        if m.get("cmd") == "toCtlrGet" and m["get"][0][0] == "patternFileData"
+    ]
+    assert len(sent) == 2  # 3 patterns in chunks of 2
+
+
+def test_color_names():
+    from custom_components.jellyfish_local.patterns import (
+        describe_colors,
+        ui_speed_to_wire,
+        wire_speed_to_ui,
+    )
+
+    assert describe_colors([255, 201, 80, 255, 49, 0]) == "Warm White + Red Orange"
+    assert (
+        describe_colors([0, 166, 0, 105, 0, 201, 255, 128, 0, 0, 0, 0]) == "Green + Purple + Orange"
+    )
+    assert describe_colors([0, 0, 0]) == "Custom Color"
+    assert ui_speed_to_wire(100) == 1 and wire_speed_to_ui(1) == 100

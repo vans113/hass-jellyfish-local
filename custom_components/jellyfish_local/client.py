@@ -25,6 +25,8 @@ from typing import Any
 
 import aiohttp
 
+from .patterns import build_config, describe_colors, merge_config
+
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_PORT = 9000
@@ -116,20 +118,26 @@ class ControllerData:
     pattern_configs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
-def custom_label(file: str) -> str:
+def custom_label(file: str = "", colors: list[int] | None = None) -> str:
     """Display name for something playing that isn't a saved pattern.
 
-    The JellyFish app runs ad-hoc colors/effects as e.g. "_JF-CUSTOM/Custom Color";
-    those never appear in the pattern list.
+    The JellyFish app runs ad-hoc looks as e.g. "_JF-CUSTOM/Custom Color" and HA
+    runs them with no file at all; neither has a name, so describe the colors.
     """
-    return f"Custom: {file.rpartition('/')[2] or file}"
+    if colors:
+        return f"Custom: {describe_colors(colors)}"
+    return f"Custom: {file.rpartition('/')[2] or file or 'Custom Color'}"
 
 
 def running_label(state: ZoneState | None, patterns: list[str]) -> str | None:
     """What a lit zone is showing, as offered in effect/option lists."""
-    if state is None or not state.is_on or not state.file:
+    if state is None or not state.is_on:
         return None
-    return state.file if state.file in patterns else custom_label(state.file)
+    if state.file and state.file in patterns:
+        return state.file
+    if state.file or state.config.get("type"):
+        return custom_label(state.file or "", state.colors)
+    return None
 
 
 def _decode_embedded(value: Any) -> Any:
@@ -158,20 +166,7 @@ def _pattern_config(
     pattern_type: str, colors: list[int], brightness: int, color_pos: list[int]
 ) -> dict[str, Any]:
     """Pattern config in the exact field order the JellyFish app uses."""
-    return {
-        "type": pattern_type,
-        "colors": colors,
-        "runData": _run_data(brightness),
-        "direction": "Center",
-        "spaceBetweenPixels": 2,
-        "numOfLeds": 1,
-        "skip": 2,
-        "effectBetweenPixels": "No Color Transform",
-        "colorPos": color_pos,
-        "cursor": -1,
-        "ledOnPos": {},
-        "soffitZone": "",
-    }
+    return build_config(pattern_type, colors, brightness, color_pos=color_pos)
 
 
 def _split_pattern(pattern: str) -> tuple[str, str]:
@@ -588,3 +583,81 @@ class JellyFishClient:
                 await self._run(zone_list, run_state, data=config)
             else:
                 await self.apply_color(DEFAULT_COLOR, brightness, zone_list)
+
+    # ------------------------------------------------------------------ #
+    # Custom patterns (what the app's editor does)
+    # ------------------------------------------------------------------ #
+    async def run_custom(self, config: dict[str, Any], zones: Iterable[str] | None = None) -> None:
+        """Run a full pattern config that isn't saved on the controller."""
+        await self._run(self._zones(zones), STATE_ON, data=config)
+
+    async def _base_config(self, zone: str) -> tuple[dict[str, Any], str]:
+        """The config a zone is running now, and the saved file name (if any)."""
+        state = self.data.zone_states.get(zone) or ZoneState()
+        file = state.file if state.file in self.data.patterns else ""
+        if state.config.get("type"):
+            return dict(state.config), file
+        if file:
+            return dict(await self.get_pattern_config(file)), file
+        return build_config("Color", list(DEFAULT_COLOR), state.brightness or 100), ""
+
+    async def adjust(self, zones: Iterable[str] | None = None, **changes: Any) -> None:
+        """Tweak whatever is running: type, speed, direction, spacing, colors, brightness."""
+        groups: dict[str, tuple[dict[str, Any], str, list[str]]] = {}
+        for zone in self._zones(zones):
+            base, file = await self._base_config(zone)
+            new = merge_config(base, **changes)
+            key = json.dumps([new, file], sort_keys=True)
+            groups.setdefault(key, (new, file, []))[2].append(zone)
+        for config, file, zone_list in groups.values():
+            # A saved pattern keeps its name while running with changes, like the app.
+            await self._run(zone_list, STATE_ON, file=file, data=config)
+
+    async def save_pattern(self, name: str, folder: str, config: dict[str, Any]) -> str:
+        """Store a pattern on the controller so it shows up by name everywhere."""
+        name, folder = name.strip(), folder.strip()
+        if not name or not folder or "/" in name or "/" in folder:
+            raise ValueError("pattern name and folder are required and can't contain '/'")
+        key = f"{folder}/{name}"
+        await self._send(
+            {
+                "cmd": "toCtlrSet",
+                "patternFileData": {
+                    "folders": folder,
+                    "name": name,
+                    "jsonData": json.dumps(config, separators=(",", ":")),
+                },
+            }
+        )
+        self.data.pattern_configs[key] = config
+        try:
+            await self.refresh_patterns()
+        except JellyFishTimeoutError:
+            _LOGGER.debug("Pattern list not refreshed after save; will catch up later")
+        if key not in self.data.patterns:
+            self.data.patterns = sorted([*self.data.patterns, key], key=str.casefold)
+        return key
+
+    async def save_running(self, name: str, folder: str, zone: str) -> str:
+        base, _ = await self._base_config(self._zones([zone])[0])
+        return await self.save_pattern(name, folder, base)
+
+    async def get_pattern_configs(
+        self, patterns: Iterable[str] | None = None, chunk: int = 20
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch stored configs (colors etc.) for many patterns, a few per request."""
+        wanted = [p for p in (patterns or self.data.patterns) if p not in self.data.pattern_configs]
+        for i in range(0, len(wanted), chunk):
+            part = wanted[i : i + chunk]
+            args: list[str] = []
+            for pattern in part:
+                args.extend(_split_pattern(pattern))
+            try:
+                await self._request(KEY_PATTERN_DATA, *args, expect=part)
+            except JellyFishTimeoutError:
+                _LOGGER.debug("Some pattern configs didn't arrive: %s", part)
+        return {
+            p: self.data.pattern_configs[p]
+            for p in (patterns or self.data.patterns)
+            if p in self.data.pattern_configs
+        }

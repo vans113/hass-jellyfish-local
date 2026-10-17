@@ -23,6 +23,42 @@ Behaviour worth knowing:
 - **Live updates.** Changes made in the JellyFish app or by the controller's own schedule appear in Home Assistant right away. A light poll every 60 s only checks that the connection is alive.
 - **Zones added or removed on the controller** are picked up automatically, within 30 min or immediately with the refresh button.
 
+### The JellyFish card
+
+The integration ships its own dashboard card, with nothing extra to install. Add a card of type **JellyFish** (or `custom:jellyfish-card` in YAML):
+
+```yaml
+type: custom:jellyfish-card
+entity: light.jellyfish
+# optional
+entities: [light.jellyfish_all_zones, light.jellyfish_front, light.jellyfish_side]  # zone picker
+folders: [Accent, Colors, Halloween, Christmas, Home Assistant]                     # limit the list
+save_folder: Home Assistant
+```
+
+- **Looks**: every saved pattern by folder, each with a preview of its colors. Tap to play.
+- **Make your own**: pick colors, choose how they move (Solid, Chase, Paint, Stacker, Sequence, Multi-Paint), plus speed, direction and gap. **Show it on the house** runs it. **Save as a look** stores it on the controller under a name, so it shows up in Home Assistant and in the JellyFish app.
+- A live roofline at the top shows the colors that are on.
+
+### Custom patterns and live tweaks
+
+Each zone gets **effect type** and **direction** selects, plus **speed** (1 = slowest, 100 = fastest) and **spacing** numbers. They change whatever is playing, like the app's edit screen.
+
+```yaml
+action: jellyfish_local.run_pattern       # build a look in an automation or script
+target: {entity_id: light.jellyfish}
+data:
+  colors: [[255, 100, 0], [128, 0, 128]]
+  pattern_type: Chase
+  speed: 60
+  direction: Left
+  brightness_pct: 70
+```
+
+`jellyfish_local.adjust_pattern` changes parts of what's running (any of the same fields). `jellyfish_local.save_pattern` (`name`, optional `folder`) saves what's running as a named pattern.
+
+Looks made in the JellyFish app without saving show up as **"Custom: Warm White + Red Orange"**, named after their colors.
+
 ### Service: `jellyfish_local.apply_light_string`
 
 Paints a repeating sequence of colors along one or more zones.

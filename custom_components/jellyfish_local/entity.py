@@ -64,3 +64,15 @@ class JellyFishZoneEntity(JellyFishEntity):
     def available(self) -> bool:
         data = self.coordinator.client.data
         return super().available and self.zone in data.zones and self.zone in data.zone_states
+
+    @property
+    def running_config(self) -> dict:
+        """Config of what the zone shows now (pattern file data as a fallback)."""
+        state = self.zone_state
+        if state is None:
+            return {}
+        if state.config.get("type"):
+            return state.config
+        if state.file:
+            return self.coordinator.client.data.pattern_configs.get(state.file, {})
+        return {}

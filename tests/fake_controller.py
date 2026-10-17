@@ -174,6 +174,9 @@ class FakeController:
         if payload.get("cmd") == "toCtlrGet":
             for key, *args in payload.get("get", []):
                 await self._answer(key, args)
+        elif payload.get("cmd") == "toCtlrSet" and "patternFileData" in payload:
+            pf = payload["patternFileData"]
+            self.pattern_configs[f"{pf['folders']}/{pf['name']}"] = json.loads(pf["jsonData"])
         elif payload.get("cmd") == "toCtlrSet" and "runPattern" in payload:
             run = payload["runPattern"]
             for zone in run["zoneName"]:

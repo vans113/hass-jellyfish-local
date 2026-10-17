@@ -414,11 +414,11 @@ async def test_app_custom_pattern_is_not_unknown(
 ) -> None:
     await _push_custom(hass, fake)
     select = hass.states.get(SELECT_FRONT)
-    assert select.state == "Custom: Custom Color"
-    assert select.attributes["options"][0] == "Custom: Custom Color"
+    assert select.state == "Custom: Warm White + Red Orange"
+    assert select.attributes["options"][0] == "Custom: Warm White + Red Orange"
     light = hass.states.get(FRONT)
-    assert light.attributes[ATTR_EFFECT] == "Custom: Custom Color"
-    assert "Custom: Custom Color" in light.attributes[ATTR_EFFECT_LIST]
+    assert light.attributes[ATTR_EFFECT] == "Custom: Warm White + Red Orange"
+    assert "Custom: Warm White + Red Orange" in light.attributes[ATTR_EFFECT_LIST]
     assert light.attributes[ATTR_BRIGHTNESS] == 59  # 23 %
 
 
@@ -440,10 +440,10 @@ async def test_reselecting_custom_is_noop(hass: HomeAssistant, setup, fake: Fake
     await hass.services.async_call(
         "select",
         "select_option",
-        {ATTR_ENTITY_ID: SELECT_FRONT, "option": "Custom: Custom Color"},
+        {ATTR_ENTITY_ID: SELECT_FRONT, "option": "Custom: Warm White + Red Orange"},
         blocking=True,
     )
-    await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Custom: Custom Color"})
+    await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Custom: Warm White + Red Orange"})
     assert len(fake.sent_commands()) == before
     # Picking a saved pattern afterwards still works and drops the custom entry.
     await hass.services.async_call(
@@ -454,10 +454,108 @@ async def test_reselecting_custom_is_noop(hass: HomeAssistant, setup, fake: Fake
     )
     await settle(hass)
     assert hass.states.get(SELECT_FRONT).state == "Halloween/Spooky"
-    assert "Custom: Custom Color" not in hass.states.get(SELECT_FRONT).attributes["options"]
+    assert (
+        "Custom: Warm White + Red Orange" not in hass.states.get(SELECT_FRONT).attributes["options"]
+    )
 
 
 async def test_outputs_attribute(hass: HomeAssistant, setup) -> None:
     attrs = hass.states.get(FRONT).attributes
     assert attrs["pixels"] == 120
     assert attrs["outputs"] == [{"port": 1, "pixels": 120}]
+
+
+async def test_run_pattern_service_and_tweak_entities(
+    hass: HomeAssistant, setup, fake: FakeController
+) -> None:
+    await hass.services.async_call(
+        DOMAIN,
+        "run_pattern",
+        {
+            ATTR_ENTITY_ID: FRONT,
+            "colors": [[255, 100, 0], [128, 0, 128]],
+            "pattern_type": "Chase",
+            "speed": 80,
+            "direction": "Right",
+            "brightness_pct": 60,
+        },
+        blocking=True,
+    )
+    await settle(hass)
+    st = hass.states.get(FRONT)
+    assert st.attributes["colors"] == ["#ff6400", "#800080"]
+    assert st.attributes["pattern_type"] == "Chase" and st.attributes["speed"] == 80
+    assert st.attributes[ATTR_EFFECT] == "Custom: Orange + Magenta"
+    assert hass.states.get("select.front_house_front_effect_type").state == "Chase"
+    assert hass.states.get("select.front_house_front_direction").state == "Right"
+    assert float(hass.states.get("number.front_house_front_speed").state) == 80
+
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {ATTR_ENTITY_ID: "number.front_house_front_speed", "value": 20},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {ATTR_ENTITY_ID: "select.front_house_front_effect_type", "option": "Paint"},
+        blocking=True,
+    )
+    await settle(hass)
+    data = json.loads(fake.sent_commands()[-1]["runPattern"]["data"])
+    assert (
+        data["type"] == "Paint"
+        and data["runData"]["speed"] == 81
+        and data["colors"] == [255, 100, 0, 128, 0, 128]
+    )
+
+
+async def test_tweak_saved_pattern(hass: HomeAssistant, setup, fake: FakeController) -> None:
+    await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Christmas/Candy Cane"})
+    for _ in range(20):
+        await settle(hass)
+        if hass.states.get("select.front_house_front_effect_type").state == "Chase":
+            break
+    assert hass.states.get("select.front_house_front_effect_type").state == "Chase"
+    assert float(hass.states.get("number.front_house_front_speed").state) == 91  # wire 10
+    await hass.services.async_call(
+        DOMAIN, "adjust_pattern", {ATTR_ENTITY_ID: FRONT, "speed": 100}, blocking=True
+    )
+    await settle(hass)
+    cmd = fake.sent_commands()[-1]["runPattern"]
+    assert cmd["file"] == "Christmas/Candy Cane"
+    assert json.loads(cmd["data"])["runData"]["speed"] == 1
+
+
+async def test_save_pattern_service(hass: HomeAssistant, setup, fake: FakeController) -> None:
+    await hass.services.async_call(
+        DOMAIN, "run_pattern", {ATTR_ENTITY_ID: FRONT, "colors": [[255, 0, 0]]}, blocking=True
+    )
+    await hass.services.async_call(
+        DOMAIN, "save_pattern", {ATTR_ENTITY_ID: FRONT, "name": "Red Night"}, blocking=True
+    )
+    await settle(hass)
+    assert "Home Assistant/Red Night" in fake.pattern_configs
+    assert "Home Assistant/Red Night" in hass.states.get(FRONT).attributes[ATTR_EFFECT_LIST]
+
+
+async def test_bad_run_pattern_is_validation_error(hass: HomeAssistant, setup) -> None:
+    import voluptuous as vol
+
+    with pytest.raises((ServiceValidationError, vol.Invalid)):
+        await hass.services.async_call(
+            DOMAIN, "run_pattern", {ATTR_ENTITY_ID: FRONT, "colors": [[300, 0, 0]]}, blocking=True
+        )
+
+
+async def test_catalog_websocket(hass: HomeAssistant, setup, hass_ws_client) -> None:
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "jellyfish_local/catalog", "entity_id": FRONT})
+    msg = await ws.receive_json()
+    assert msg["success"], msg
+    folders = {f["name"]: f for f in msg["result"]["folders"]}
+    assert set(folders) == {"Christmas", "Everyday", "Halloween"}
+    cane = folders["Christmas"]["patterns"][0]
+    assert cane["name"] == "Candy Cane" and cane["colors"] == [255, 0, 0, 255, 255, 255]
+    assert "Chase" in msg["result"]["types"]

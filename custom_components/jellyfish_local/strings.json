@@ -4,13 +4,21 @@
       "user": {
         "title": "Connect to a JellyFish controller",
         "description": "Give the controller a fixed IP address (DHCP reservation) so it can always be found.",
-        "data": { "host": "Host" },
-        "data_description": { "host": "IP address or hostname of the JellyFish controller on your network." }
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the JellyFish controller on your network."
+        }
       },
       "reconfigure": {
         "title": "Change controller address",
-        "data": { "host": "Host" },
-        "data_description": { "host": "New IP address or hostname of the same JellyFish controller." }
+        "data": {
+          "host": "Host"
+        },
+        "data_description": {
+          "host": "New IP address or hostname of the same JellyFish controller."
+        }
       }
     },
     "error": {
@@ -25,13 +33,33 @@
   },
   "entity": {
     "light": {
-      "all_zones": { "name": "All zones" }
+      "all_zones": {
+        "name": "All zones"
+      }
     },
     "select": {
-      "pattern": { "name": "{zone} pattern" }
+      "pattern": {
+        "name": "{zone} pattern"
+      },
+      "effect_type": {
+        "name": "{zone} effect type"
+      },
+      "direction": {
+        "name": "{zone} direction"
+      }
     },
     "button": {
-      "refresh": { "name": "Refresh patterns and zones" }
+      "refresh": {
+        "name": "Refresh patterns and zones"
+      }
+    },
+    "number": {
+      "speed": {
+        "name": "{zone} speed"
+      },
+      "spacing": {
+        "name": "{zone} spacing"
+      }
     }
   },
   "services": {
@@ -46,6 +74,88 @@
         "brightness_pct": {
           "name": "Brightness",
           "description": "Brightness in percent (1-100)."
+        }
+      }
+    },
+    "run_pattern": {
+      "name": "Run custom pattern",
+      "description": "Build a pattern from colors and an effect, like the JellyFish app's editor. It isn't saved unless you use Save pattern.",
+      "fields": {
+        "colors": {
+          "name": "Colors",
+          "description": "List of RGB colors, e.g. [[255, 0, 0], [255, 255, 255]]. Up to 30."
+        },
+        "pattern_type": {
+          "name": "Effect type",
+          "description": "How the colors move: Color (static), Chase, Paint, Stacker, Sequence or Multi-Paint."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "1 = slowest, 100 = fastest."
+        },
+        "direction": {
+          "name": "Direction",
+          "description": "Which way the pattern moves."
+        },
+        "spacing": {
+          "name": "Spacing",
+          "description": "Space between color blocks (the app's 'space between pixels')."
+        },
+        "effect_between": {
+          "name": "Blend",
+          "description": "How colors blend into each other."
+        },
+        "brightness_pct": {
+          "name": "Brightness",
+          "description": "Brightness in percent (1-100)."
+        }
+      }
+    },
+    "adjust_pattern": {
+      "name": "Adjust running pattern",
+      "description": "Change parts of what's playing now (speed, effect, colors, ...) and keep the rest.",
+      "fields": {
+        "colors": {
+          "name": "Colors",
+          "description": "Replace the colors (optional)."
+        },
+        "pattern_type": {
+          "name": "Effect type",
+          "description": "How the colors move: Color (static), Chase, Paint, Stacker, Sequence or Multi-Paint."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "1 = slowest, 100 = fastest."
+        },
+        "direction": {
+          "name": "Direction",
+          "description": "Which way the pattern moves."
+        },
+        "spacing": {
+          "name": "Spacing",
+          "description": "Space between color blocks (the app's 'space between pixels')."
+        },
+        "effect_between": {
+          "name": "Blend",
+          "description": "How colors blend into each other."
+        },
+        "brightness_pct": {
+          "name": "Brightness",
+          "description": "Brightness in percent (1-100)."
+        }
+      }
+    },
+    "save_pattern": {
+      "name": "Save pattern",
+      "description": "Save what's playing now as a named pattern on the controller, so it shows up by name in Home Assistant and the JellyFish app.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Pattern name."
+        },
+        "folder": {
+          "name": "Folder",
+          "description": "Folder to save it in (default: Home Assistant)."
         }
       }
     }

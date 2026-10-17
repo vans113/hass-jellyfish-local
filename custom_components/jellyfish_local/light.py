@@ -21,9 +21,33 @@ import voluptuous as vol
 
 from . import JellyFishConfigEntry
 from .client import ZoneState, running_label
-from .const import ATTR_BRIGHTNESS_PCT, ATTR_COLORS, SERVICE_APPLY_LIGHT_STRING
+from .const import (
+    ATTR_BRIGHTNESS_PCT,
+    ATTR_COLORS,
+    ATTR_DIRECTION,
+    ATTR_EFFECT_BETWEEN,
+    ATTR_FOLDER,
+    ATTR_NAME,
+    ATTR_PATTERN_TYPE,
+    ATTR_SPACING,
+    ATTR_SPEED,
+    DEFAULT_SAVE_FOLDER,
+    SERVICE_ADJUST_PATTERN,
+    SERVICE_APPLY_LIGHT_STRING,
+    SERVICE_RUN_PATTERN,
+    SERVICE_SAVE_PATTERN,
+)
 from .coordinator import JellyFishCoordinator
 from .entity import JellyFishEntity, JellyFishZoneEntity
+from .patterns import (
+    DIRECTIONS,
+    EFFECTS_BETWEEN,
+    MAX_COLORS,
+    PATTERN_TYPES,
+    build_config,
+    color_triples,
+    wire_speed_to_ui,
+)
 
 PARALLEL_UPDATES = 1  # one socket; send commands one at a time
 
@@ -32,6 +56,25 @@ LIGHT_STRING_SCHEMA = {
     vol.Required(ATTR_COLORS): vol.All(cv.ensure_list, [RGB_SCHEMA], vol.Length(min=1)),
     vol.Optional(ATTR_BRIGHTNESS_PCT, default=100): vol.All(
         vol.Coerce(int), vol.Range(min=1, max=100)
+    ),
+}
+
+
+_PATTERN_FIELDS = {
+    vol.Optional(ATTR_PATTERN_TYPE): vol.In(PATTERN_TYPES),
+    vol.Optional(ATTR_SPEED): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+    vol.Optional(ATTR_DIRECTION): vol.In(DIRECTIONS),
+    vol.Optional(ATTR_SPACING): vol.All(vol.Coerce(int), vol.Range(min=0, max=50)),
+    vol.Optional(ATTR_EFFECT_BETWEEN): vol.In(EFFECTS_BETWEEN),
+    vol.Optional(ATTR_BRIGHTNESS_PCT): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+}
+COLORS_SCHEMA = vol.All(cv.ensure_list, [RGB_SCHEMA], vol.Length(min=1, max=MAX_COLORS))
+RUN_PATTERN_SCHEMA = {vol.Required(ATTR_COLORS): COLORS_SCHEMA, **_PATTERN_FIELDS}
+ADJUST_PATTERN_SCHEMA = {vol.Optional(ATTR_COLORS): COLORS_SCHEMA, **_PATTERN_FIELDS}
+SAVE_PATTERN_SCHEMA = {
+    vol.Required(ATTR_NAME): vol.All(cv.string, vol.Length(min=1, max=60)),
+    vol.Optional(ATTR_FOLDER, default=DEFAULT_SAVE_FOLDER): vol.All(
+        cv.string, vol.Length(min=1, max=60)
     ),
 }
 
@@ -73,6 +116,15 @@ async def async_setup_entry(
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
         SERVICE_APPLY_LIGHT_STRING, LIGHT_STRING_SCHEMA, "async_apply_light_string"
+    )
+    platform.async_register_entity_service(
+        SERVICE_RUN_PATTERN, RUN_PATTERN_SCHEMA, "async_run_pattern"
+    )
+    platform.async_register_entity_service(
+        SERVICE_ADJUST_PATTERN, ADJUST_PATTERN_SCHEMA, "async_adjust_pattern"
+    )
+    platform.async_register_entity_service(
+        SERVICE_SAVE_PATTERN, SAVE_PATTERN_SCHEMA, "async_save_pattern"
     )
 
 
@@ -132,10 +184,23 @@ class _JellyFishLight(LightEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         states = self._states
         if len(states) != 1:
-            return {}
+            return {"zones": list(self._zones)}
+        state = states[0]
+        cfg = state.config
+        if not cfg.get("type") and state.file:
+            cfg = self.coordinator.client.data.pattern_configs.get(state.file, {})
+        run = cfg.get("runData") or {}
         attrs: dict[str, Any] = {
-            "pattern_type": states[0].pattern_type,
-            "activated_by": states[0].activated_by,
+            "pattern_type": cfg.get("type") or state.pattern_type,
+            "activated_by": state.activated_by,
+            # For the card's editor ("edit what's playing").
+            "colors": [
+                f"#{r:02x}{g:02x}{b:02x}" for r, g, b in color_triples(cfg.get("colors") or [])
+            ],
+            "speed": wire_speed_to_ui(run.get("speed")),
+            "direction": cfg.get("direction"),
+            "spacing": cfg.get("spaceBetweenPixels"),
+            "zones": list(self._zones),
         }
         if len(self._zones) == 1:
             zone = self.coordinator.client.data.zones.get(self._zones[0]) or {}
@@ -191,6 +256,53 @@ class _JellyFishLight(LightEntity):
         await self._command(
             self.coordinator.client.apply_light_string(list(colors), brightness_pct, self._zones)
         )
+
+    async def async_run_pattern(
+        self,
+        colors: list[tuple[int, int, int]],
+        pattern_type: str = "Color",
+        speed: int | None = None,
+        direction: str = "Center",
+        spacing: int = 2,
+        effect_between: str = "No Color Transform",
+        brightness_pct: int | None = None,
+    ) -> None:
+        """Run a pattern built in HA (not saved on the controller)."""
+        if brightness_pct is None:
+            brightness_pct = to_percent(self.brightness) if self.brightness else 100
+        try:
+            config = build_config(
+                pattern_type,
+                [list(c) for c in colors],
+                brightness_pct,
+                speed=speed if speed is not None else (50 if pattern_type != "Color" else None),
+                direction=direction,
+                spacing=spacing,
+                effect_between=effect_between,
+            )
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+        await self._command(self.coordinator.client.run_custom(config, self._zones))
+
+    async def async_adjust_pattern(self, **changes: Any) -> None:
+        """Change parts of whatever is running (speed, type, colors, ...)."""
+        mapped = {
+            "pattern_type": changes.get(ATTR_PATTERN_TYPE),
+            "speed": changes.get(ATTR_SPEED),
+            "direction": changes.get(ATTR_DIRECTION),
+            "spacing": changes.get(ATTR_SPACING),
+            "effect_between": changes.get(ATTR_EFFECT_BETWEEN),
+            "brightness": changes.get(ATTR_BRIGHTNESS_PCT),
+            "colors": [list(c) for c in changes[ATTR_COLORS]] if ATTR_COLORS in changes else None,
+        }
+        mapped = {k: v for k, v in mapped.items() if v is not None}
+        if not mapped:
+            raise ServiceValidationError("Nothing to change")
+        await self._command(self.coordinator.client.adjust(self._zones, **mapped))
+
+    async def async_save_pattern(self, name: str, folder: str = DEFAULT_SAVE_FOLDER) -> None:
+        """Save what's running on the first zone as a named pattern on the controller."""
+        await self._command(self.coordinator.client.save_running(name, folder, self._zones[0]))
 
 
 class JellyFishZoneLight(_JellyFishLight, JellyFishZoneEntity):

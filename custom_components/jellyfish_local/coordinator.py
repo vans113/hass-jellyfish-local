@@ -39,6 +39,7 @@ class JellyFishCoordinator(DataUpdateCoordinator[ControllerData]):
         self._was_connected = False
         self._known_zones: set[str] = set()
         self._paused = False
+        self._fetching_configs = False
         self._remove_listener = client.add_listener(self._handle_client_event)
 
     @property
@@ -78,6 +79,7 @@ class JellyFishCoordinator(DataUpdateCoordinator[ControllerData]):
         finally:
             self._updating = False
         self._was_connected = True
+        self._schedule_running_config_fetch()
         return self.client.data
 
     async def async_refresh_metadata(self, notify: bool = True) -> None:
@@ -104,6 +106,7 @@ class JellyFishCoordinator(DataUpdateCoordinator[ControllerData]):
         if self.client.connected:
             if self._was_connected:
                 self.async_set_updated_data(self.client.data)
+                self._schedule_running_config_fetch()
             return
         if self._was_connected:
             self._was_connected = False
@@ -146,3 +149,32 @@ class JellyFishCoordinator(DataUpdateCoordinator[ControllerData]):
                 ):
                     LOGGER.info("Zone %s no longer exists; removing %s", zone, entry.entity_id)
                     registry.async_remove(entry.entity_id)
+
+    @callback
+    def _schedule_running_config_fetch(self) -> None:
+        """Saved patterns arrive by name only; fetch their settings for the tweak controls."""
+        data = self.client.data
+        missing = {
+            s.file
+            for s in data.zone_states.values()
+            if s.is_on
+            and s.file in data.patterns
+            and not s.config.get("type")
+            and s.file not in data.pattern_configs
+        }
+        if not missing or self._fetching_configs:
+            return
+        self._fetching_configs = True
+
+        async def fetch() -> None:
+            try:
+                await self.client.get_pattern_configs(sorted(missing))
+            except JellyFishError as err:
+                LOGGER.debug("Couldn't fetch pattern settings: %s", err)
+            finally:
+                self._fetching_configs = False
+            self.async_update_listeners()
+
+        self.config_entry.async_create_background_task(
+            self.hass, fetch(), "jellyfish_local pattern settings"
+        )

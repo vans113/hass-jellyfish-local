@@ -1,10 +1,47 @@
 {
   "entity": {
-    "light": { "all_zones": { "default": "mdi:home-lightbulb-outline" } },
-    "select": { "pattern": { "default": "mdi:palette" } },
-    "button": { "refresh": { "default": "mdi:refresh" } }
+    "light": {
+      "all_zones": {
+        "default": "mdi:home-lightbulb-outline"
+      }
+    },
+    "select": {
+      "pattern": {
+        "default": "mdi:palette"
+      },
+      "effect_type": {
+        "default": "mdi:animation-play"
+      },
+      "direction": {
+        "default": "mdi:arrow-left-right"
+      }
+    },
+    "button": {
+      "refresh": {
+        "default": "mdi:refresh"
+      }
+    },
+    "number": {
+      "speed": {
+        "default": "mdi:speedometer"
+      },
+      "spacing": {
+        "default": "mdi:dots-horizontal"
+      }
+    }
   },
   "services": {
-    "apply_light_string": { "service": "mdi:led-strip-variant" }
+    "apply_light_string": {
+      "service": "mdi:led-strip-variant"
+    },
+    "run_pattern": {
+      "service": "mdi:palette"
+    },
+    "adjust_pattern": {
+      "service": "mdi:tune"
+    },
+    "save_pattern": {
+      "service": "mdi:content-save"
+    }
   }
 }
