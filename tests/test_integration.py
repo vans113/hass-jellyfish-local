@@ -282,6 +282,20 @@ async def test_all_zones(hass: HomeAssistant, setup, fake: FakeController) -> No
     assert hass.states.get(ALL).state == STATE_OFF
 
 
+async def test_all_zones_exposes_shared_colors(
+    hass: HomeAssistant, setup, fake: FakeController
+) -> None:
+    # The card points at All zones; it needs colors to draw the roofline.
+    await call(hass, "turn_on", ALL, **{ATTR_EFFECT: "Christmas/Candy Cane"})
+    attrs = hass.states.get(ALL).attributes
+    assert attrs[ATTR_EFFECT] == "Christmas/Candy Cane"
+    assert attrs["colors"] == ["#ff0000", "#ffffff"]
+    assert attrs["pattern_type"] == "Chase"
+    # When zones disagree, fall back to just the zone list (no single look).
+    await call(hass, "turn_on", FRONT, **{ATTR_EFFECT: "Halloween/Spooky"})
+    assert "colors" not in hass.states.get(ALL).attributes
+
+
 async def test_unknown_effect_is_validation_error(hass: HomeAssistant, setup) -> None:
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(

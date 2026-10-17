@@ -183,25 +183,36 @@ class _JellyFishLight(LightEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         states = self._states
-        if len(states) != 1:
-            return {"zones": list(self._zones)}
-        state = states[0]
+        attrs: dict[str, Any] = {"zones": list(self._zones)}
+        # Pick a representative zone to describe. For a single-zone light that's
+        # the zone itself; for the "All zones" light, use the shared look when
+        # every lit zone is playing the same thing, so the card can still draw
+        # the roofline and name. If the zones disagree, expose only the list.
+        if len(states) == 1:
+            state = states[0]
+        else:
+            lit = [s for s in states if s.is_on]
+            looks = {(s.file, tuple(s.colors or ())) for s in lit}
+            if not lit or len(looks) != 1:
+                return attrs
+            state = lit[0]
         cfg = state.config
         if not cfg.get("type") and state.file:
             cfg = self.coordinator.client.data.pattern_configs.get(state.file, {})
         run = cfg.get("runData") or {}
-        attrs: dict[str, Any] = {
-            "pattern_type": cfg.get("type") or state.pattern_type,
-            "activated_by": state.activated_by,
-            # For the card's editor ("edit what's playing").
-            "colors": [
-                f"#{r:02x}{g:02x}{b:02x}" for r, g, b in color_triples(cfg.get("colors") or [])
-            ],
-            "speed": wire_speed_to_ui(run.get("speed")),
-            "direction": cfg.get("direction"),
-            "spacing": cfg.get("spaceBetweenPixels"),
-            "zones": list(self._zones),
-        }
+        attrs.update(
+            {
+                "pattern_type": cfg.get("type") or state.pattern_type,
+                "activated_by": state.activated_by,
+                # For the card's editor ("edit what's playing").
+                "colors": [
+                    f"#{r:02x}{g:02x}{b:02x}" for r, g, b in color_triples(cfg.get("colors") or [])
+                ],
+                "speed": wire_speed_to_ui(run.get("speed")),
+                "direction": cfg.get("direction"),
+                "spacing": cfg.get("spaceBetweenPixels"),
+            }
+        )
         if len(self._zones) == 1:
             zone = self.coordinator.client.data.zones.get(self._zones[0]) or {}
             attrs["pixels"] = zone.get("numPixels")
