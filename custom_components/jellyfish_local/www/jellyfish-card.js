@@ -10,7 +10,7 @@
  *   folders: [Colors, Halloween]       # optional: only show these folders
  *   save_folder: Home Assistant        # optional
  */
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 
 const PALETTE = [
   "#ffbe6e", "#ffffff", "#ff0000", "#ff3200", "#ff6400", "#ffc828",
@@ -326,6 +326,17 @@ class JellyFishCard extends HTMLElement {
     const hass = this._hass;
     const st = this._state;
     if (!hass) return;
+    // Replacing innerHTML wholesale momentarily collapses the card to zero
+    // height, which makes mobile browsers clamp the page scroll back to the
+    // top. Pin the host to its current height across the swap, then release it
+    // next frame so the layout can settle to its new size.
+    const prevH = this.offsetHeight;
+    if (prevH) this.style.minHeight = `${prevH}px`;
+    if (this._releaseH) cancelAnimationFrame(this._releaseH);
+    this._releaseH = requestAnimationFrame(() => {
+      this._releaseH = 0;
+      this.style.minHeight = "";
+    });
     if (!st) {
       this.shadowRoot.innerHTML = `<style>${CSS}</style><ha-card><div class="empty">${esc(this._active)} isn't available. Check the JellyFish Local integration.</div></ha-card>`;
       return;
