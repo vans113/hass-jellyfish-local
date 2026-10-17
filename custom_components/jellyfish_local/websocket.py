@@ -19,6 +19,7 @@ from .patterns import DIRECTIONS, EFFECTS_BETWEEN, MAX_COLORS, PATTERN_TYPES
 @callback
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_catalog)
+    websocket_api.async_register_command(hass, ws_set_favorites)
 
 
 def _coordinator_for(hass: HomeAssistant, entity_id: str):
@@ -67,10 +68,12 @@ async def ws_catalog(
                 "colors": cfg.get("colors") or [],
             }
         )
+    favorites = list(coordinator.config_entry.options.get("favorites", []))
     connection.send_result(
         msg["id"],
         {
             "folders": [{"name": f, "patterns": p} for f, p in folders.items()],
+            "favorites": favorites,
             "zones": {
                 zone: {"running": running_label(data.zone_states.get(zone), data.patterns)}
                 for zone in data.zones
@@ -81,3 +84,28 @@ async def ws_catalog(
             "max_colors": MAX_COLORS,
         },
     )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "jellyfish_local/set_favorites",
+        vol.Required("entity_id"): str,
+        vol.Required("favorites"): [str],
+    }
+)
+@websocket_api.async_response
+async def ws_set_favorites(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Save the card's favorite pattern keys for a controller."""
+    coordinator = _coordinator_for(hass, msg["entity_id"])
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "No JellyFish controller for that entity")
+        return
+    # Keep only real patterns, de-duplicated, order preserved, capped.
+    known = set(coordinator.client.data.patterns)
+    seen: set[str] = set()
+    favorites = [k for k in msg["favorites"] if k in known and not (k in seen or seen.add(k))][:60]
+    entry = coordinator.config_entry
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "favorites": favorites})
+    connection.send_result(msg["id"], {"favorites": favorites})

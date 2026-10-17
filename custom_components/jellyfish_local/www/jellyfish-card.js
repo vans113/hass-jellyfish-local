@@ -10,7 +10,7 @@
  *   folders: [Colors, Halloween]       # optional: only show these folders
  *   save_folder: Home Assistant        # optional
  */
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 const PALETTE = [
   "#ffbe6e", "#ffffff", "#ff0000", "#ff3200", "#ff6400", "#ffc828",
@@ -26,6 +26,7 @@ const TYPE_HELP = {
   "Multi-Paint": "Paints in blocks",
 };
 const MAX_SWATCH = 10;
+const FAV = "__favorites__";
 
 const hexToRgb = (h) => {
   const v = h.replace("#", "");
@@ -99,9 +100,10 @@ class JellyFishCard extends HTMLElement {
     this._loading = true;
     try {
       this._catalog = await this._hass.callWS({ type: "jellyfish_local/catalog", entity_id: this._active });
+      this._favorites = new Set(this._catalog.favorites || []);
       if (!this._folder) {
         const names = this._folders().map((f) => f.name);
-        this._folder = names.includes("Accent") ? "Accent" : names[0];
+        this._folder = this._favorites.size ? FAV : names.includes("Accent") ? "Accent" : names[0];
       }
       this._error = null;
     } catch (err) {
@@ -171,6 +173,9 @@ class JellyFishCard extends HTMLElement {
         break;
       case "look":
         this._call("light", "turn_on", { effect: v });
+        break;
+      case "fav":
+        this._toggleFav(v);
         break;
       case "slot":
         this._draft.editing = Number(v);
@@ -378,28 +383,77 @@ class JellyFishCard extends HTMLElement {
     row?.addEventListener("scroll", () => (this._folderScroll = row.scrollLeft), { passive: true });
   }
 
+  _allPatterns() {
+    const map = {};
+    for (const f of (this._catalog && this._catalog.folders) || []) {
+      for (const p of f.patterns) map[p.key] = p;
+    }
+    return map;
+  }
+
+  async _toggleFav(key) {
+    this._favorites = this._favorites || new Set();
+    if (this._favorites.has(key)) this._favorites.delete(key);
+    else this._favorites.add(key);
+    this._render();
+    try {
+      const res = await this._hass.callWS({
+        type: "jellyfish_local/set_favorites",
+        entity_id: this._active,
+        favorites: [...this._favorites],
+      });
+      this._favorites = new Set(res.favorites);
+      if (this._catalog) this._catalog.favorites = res.favorites;
+    } catch (err) {
+      this._toast("Couldn't save favorites");
+    }
+    this._render();
+  }
+
   _looksView(effect) {
     if (this._error && !this._catalog) return `<div class="empty">${esc(this._error)}</div>`;
     if (!this._catalog) return `<div class="empty">Loading looks…</div>`;
     const folders = this._folders();
     if (!folders.length) return `<div class="empty">No saved patterns on the controller yet. Make one in “Make your own”.</div>`;
-    const current = folders.find((f) => f.name === this._folder) || folders[0];
-    const chips = folders
-      .map(
-        (f) =>
-          `<button class="chip ${f.name === current.name ? "sel" : ""}" data-act="folder" data-v="${esc(f.name)}">${esc(f.name)}</button>`
-      )
-      .join("");
-    const tiles = current.patterns
+    const favs = this._favorites || new Set();
+    const showingFavs = this._folder === FAV;
+    const all = this._allPatterns();
+    let patterns;
+    if (showingFavs) {
+      patterns = [...favs].map((k) => all[k]).filter(Boolean);
+    } else {
+      const current = folders.find((f) => f.name === this._folder) || folders[0];
+      this._folder = current.name;
+      patterns = current.patterns;
+    }
+    const favChip = favs.size
+      ? `<button class="chip ${showingFavs ? "sel" : ""}" data-act="folder" data-v="${FAV}" title="Favorites">&#9733;</button>`
+      : "";
+    const chips =
+      favChip +
+      folders
+        .map(
+          (f) =>
+            `<button class="chip ${f.name === this._folder && !showingFavs ? "sel" : ""}" data-act="folder" data-v="${esc(f.name)}">${esc(f.name)}</button>`
+        )
+        .join("");
+    const tiles = patterns
       .map((p) => {
         const sel = p.key === effect;
-        return `<button class="look ${sel ? "sel" : ""}" data-act="look" data-v="${esc(p.key)}" aria-pressed="${sel}">
-            ${this._string(triples(p.colors), { count: MAX_SWATCH, cls: "mini" })}
-            <span class="look-name">${esc(p.name.trim())}</span>
-          </button>`;
+        const isFav = favs.has(p.key);
+        return `<div class="look ${sel ? "sel" : ""}">
+            <button class="look-play" data-act="look" data-v="${esc(p.key)}" aria-pressed="${sel}">
+              ${this._string(triples(p.colors), { count: MAX_SWATCH, cls: "mini" })}
+              <span class="look-name">${esc(p.name.trim())}</span>
+            </button>
+            <button class="fav ${isFav ? "on" : ""}" data-act="fav" data-v="${esc(p.key)}" aria-pressed="${isFav}" aria-label="${isFav ? "Remove favorite" : "Add favorite"}" title="${isFav ? "Remove favorite" : "Add favorite"}">${isFav ? "&#9733;" : "&#9734;"}</button>
+          </div>`;
       })
       .join("");
-    return `<div class="folders">${chips}</div><div class="grid">${tiles}</div>`;
+    const hint = showingFavs && !patterns.length
+      ? `<div class="empty">No favorites yet. Tap the &#9734; on any look to add it here.</div>`
+      : `<div class="grid">${tiles}</div>`;
+    return `<div class="folders">${chips}</div>${hint}`;
   }
 
   _createView() {
@@ -516,9 +570,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--primary-col
 .folders::-webkit-scrollbar { display: none; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 0 16px; }
-.look { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left; padding: 12px; border-radius: var(--jf-radius); border: 1px solid var(--divider-color); background: transparent; min-height: 64px; }
+.look { position: relative; border-radius: var(--jf-radius); border: 1px solid var(--divider-color); min-height: 64px; }
 .look.sel { border-color: var(--primary-color); box-shadow: inset 0 0 0 1px var(--primary-color); }
+.look-play { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left; padding: 12px 40px 12px 12px; background: transparent; border: 0; width: 100%; border-radius: var(--jf-radius); }
 .look-name { font-size: .92rem; line-height: 1.25; }
+.fav { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; color: var(--secondary-text-color); font-size: 1.1rem; line-height: 1; padding: 0; }
+.fav.on { color: #f5c518; }
+.folders { -webkit-mask-image: linear-gradient(90deg, #000 94%, transparent); mask-image: linear-gradient(90deg, #000 94%, transparent); }
 
 .create { padding: 0 16px; display: flex; flex-direction: column; gap: 12px; }
 .preview { padding: 14px 12px; border-radius: var(--jf-radius); background: color-mix(in srgb, var(--primary-text-color) 6%, transparent); }

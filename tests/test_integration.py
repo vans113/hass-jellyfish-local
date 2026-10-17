@@ -559,3 +559,28 @@ async def test_catalog_websocket(hass: HomeAssistant, setup, hass_ws_client) -> 
     cane = folders["Christmas"]["patterns"][0]
     assert cane["name"] == "Candy Cane" and cane["colors"] == [255, 0, 0, 255, 255, 255]
     assert "Chase" in msg["result"]["types"]
+
+
+async def test_favorites_websocket(hass: HomeAssistant, setup, hass_ws_client) -> None:
+    ws = await hass_ws_client(hass)
+    # Initially empty.
+    await ws.send_json({"id": 1, "type": "jellyfish_local/catalog", "entity_id": FRONT})
+    assert (await ws.receive_json())["result"]["favorites"] == []
+    # Save two (one bogus, dropped); order preserved, bogus removed.
+    await ws.send_json(
+        {
+            "id": 2,
+            "type": "jellyfish_local/set_favorites",
+            "entity_id": FRONT,
+            "favorites": ["Halloween/Spooky", "Nope/Nope", "Christmas/Candy Cane"],
+        }
+    )
+    saved = (await ws.receive_json())["result"]["favorites"]
+    assert saved == ["Halloween/Spooky", "Christmas/Candy Cane"]
+    # Persisted and visible in a fresh catalog call.
+    await ws.send_json({"id": 3, "type": "jellyfish_local/catalog", "entity_id": FRONT})
+    assert (await ws.receive_json())["result"]["favorites"] == [
+        "Halloween/Spooky",
+        "Christmas/Candy Cane",
+    ]
+    assert setup.options["favorites"] == ["Halloween/Spooky", "Christmas/Candy Cane"]
