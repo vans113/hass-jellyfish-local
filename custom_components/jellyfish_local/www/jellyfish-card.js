@@ -8,9 +8,10 @@
  *     - light.jellyfish_front
  *   name: Roofline                     # optional
  *   folders: [Colors, Halloween]       # optional: only show these folders
- *   save_folder: Home Assistant        # optional
+ *   exclude_folders: [Home Assistant]  # optional: hide these folders
+ *   save_folder: Custom                # optional (where "Save as a look" stores)
  */
-const VERSION = "0.3.3";
+const VERSION = "0.3.4";
 
 const PALETTE = [
   "#ffbe6e", "#ffffff", "#ff0000", "#ff3200", "#ff6400", "#ffc828",
@@ -116,7 +117,10 @@ class JellyFishCard extends HTMLElement {
   _folders() {
     const all = (this._catalog && this._catalog.folders) || [];
     const only = this._config.folders;
-    return all.filter((f) => !f.name.startsWith("_") && (!only || only.includes(f.name)));
+    const exclude = this._config.exclude_folders || [];
+    return all.filter(
+      (f) => !f.name.startsWith("_") && (!only || only.includes(f.name)) && !exclude.includes(f.name),
+    );
   }
 
   _call(domain, service, data = {}) {
@@ -326,10 +330,10 @@ class JellyFishCard extends HTMLElement {
     const hass = this._hass;
     const st = this._state;
     if (!hass) return;
-    // Replacing innerHTML wholesale momentarily collapses the card to zero
-    // height, which makes mobile browsers clamp the page scroll back to the
-    // top. Pin the host to its current height across the swap, then release it
-    // next frame so the layout can settle to its new size.
+    // Replacing innerHTML wholesale makes mobile browsers clamp the page scroll
+    // back to the top. Pin the host height across the swap AND remember every
+    // scroll container we sit inside, then put the scroll back — so tapping a
+    // tab, folder or control never jumps the page.
     const prevH = this.offsetHeight;
     if (prevH) this.style.minHeight = `${prevH}px`;
     if (this._releaseH) cancelAnimationFrame(this._releaseH);
@@ -337,8 +341,17 @@ class JellyFishCard extends HTMLElement {
       this._releaseH = 0;
       this.style.minHeight = "";
     });
+    const scrollers = this._scrollAncestors();
+    const tops = scrollers.map((s) => s.scrollTop);
+    const restoreScroll = () => {
+      scrollers.forEach((s, i) => {
+        if (s.scrollTop !== tops[i]) s.scrollTop = tops[i];
+      });
+    };
     if (!st) {
       this.shadowRoot.innerHTML = `<style>${CSS}</style><ha-card><div class="empty">${esc(this._active)} isn't available. Check the JellyFish Local integration.</div></ha-card>`;
+      restoreScroll();
+      requestAnimationFrame(restoreScroll);
       return;
     }
     const a = st.attributes;
@@ -392,6 +405,26 @@ class JellyFishCard extends HTMLElement {
     const row = this.shadowRoot.querySelector(".folders");
     if (row && this._folderScroll) row.scrollLeft = this._folderScroll;
     row?.addEventListener("scroll", () => (this._folderScroll = row.scrollLeft), { passive: true });
+    restoreScroll();
+    requestAnimationFrame(restoreScroll);
+  }
+
+  _scrollAncestors() {
+    // Every element we're nested inside, across shadow boundaries, plus the
+    // document scroller. Restoring scrollTop on a non-scrolling one is a no-op,
+    // so recording them all is safe and finds whichever one actually scrolls.
+    const list = [];
+    let node = this;
+    while (node) {
+      let parent = node.parentNode || node.host;
+      if (parent instanceof ShadowRoot) parent = parent.host;
+      if (!parent || parent.nodeType !== 1) break;
+      list.push(parent);
+      node = parent;
+    }
+    const se = document.scrollingElement;
+    if (se && !list.includes(se)) list.push(se);
+    return list;
   }
 
   _allPatterns() {
