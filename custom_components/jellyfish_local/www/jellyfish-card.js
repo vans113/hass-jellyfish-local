@@ -10,16 +10,32 @@
  *   folders: [Colors, Halloween]       # optional: only show these folders
  *   exclude_folders: [Home Assistant]  # optional: hide these folders
  *   save_folder: Custom                # optional (where "Save as a look" stores)
- *   delete_folders: [Custom]           # optional: folders where holding a look offers
- *                                      #   to delete it (default: save_folder)
+ *   delete_folders: [Custom]           # optional: limit hold-to-delete to these folders
+ *                                      #   (stock patterns can never be deleted)
+ *   palette_folder: Colors             # optional: folder whose solid colors fill the palette
  */
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 
+// Used only when the controller's Colors folder isn't available.
 const PALETTE = [
-  "#ffbe6e", "#ffffff", "#ff0000", "#ff3200", "#ff6400", "#ffc828",
-  "#00ff00", "#3cff96", "#00e6d2", "#50b4ff", "#0000ff", "#8c00ff",
-  "#ff00ff", "#ff5aaa",
+  ["#ffbe6e", "Warm White"], ["#ffffff", "White"], ["#ff0000", "Red"], ["#ff3200", "Red Orange"],
+  ["#ff6400", "Orange"], ["#ffc828", "Yellow"], ["#00ff00", "Green"], ["#3cff96", "Mint Green"],
+  ["#00e6d2", "Turquoise"], ["#50b4ff", "Sky Blue"], ["#0000ff", "Blue"], ["#8c00ff", "Purple"],
+  ["#ff00ff", "Hot Pink"], ["#ff5aaa", "Pink"],
 ];
+const OFF = "#000000";
+const hsl = (hex) => {
+  const [r, g, b] = hexToRgbRaw(hex).map((x) => x / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l];
+  const sat = d / (1 - Math.abs(2 * l - 1));
+  const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, sat, l];
+};
+function hexToRgbRaw(h) {
+  const v = h.replace("#", "");
+  return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16));
+}
 const TYPE_HELP = {
   Color: "Holds still",
   Chase: "Runs along the roof",
@@ -150,7 +166,10 @@ class JellyFishCard extends HTMLElement {
   _ensureDraft() {
     if (this._draft) return;
     const a = (this._state && this._state.attributes) || {};
-    const colors = (a.colors || []).filter(lit).slice(0, 8);
+    // Keep "off" spacers (they're part of looks like 1-on-3-off), but start
+    // from warm white if nothing is actually lit.
+    const playing = (a.colors || []).slice(0, this._maxColors());
+    const colors = playing.some(lit) ? playing : [];
     this._draft = {
       colors: colors.length ? colors : ["#ffbe6e"],
       type: a.pattern_type && TYPE_HELP[a.pattern_type] ? a.pattern_type : "Color",
@@ -219,7 +238,7 @@ class JellyFishCard extends HTMLElement {
         this._render();
         break;
       case "add":
-        if (d.colors.length < 8) d.colors.push(v || "#ffffff");
+        if (d.colors.length < this._maxColors()) d.colors.push(v || "#ffffff");
         this._render();
         break;
       case "type":
@@ -233,6 +252,14 @@ class JellyFishCard extends HTMLElement {
       case "spacing":
         d.spacing = Math.max(0, Math.min(50, d.spacing + Number(v)));
         this._render();
+        break;
+      case "any":
+        if (d.colors.length < this._maxColors()) {
+          d.colors.push("#ffffff");
+          d.editing = d.colors.length - 1;
+          this._render();
+          this.shadowRoot.querySelector(`#pick-${d.editing}`)?.click();
+        }
         break;
       case "from-current":
         this._draft = null;
@@ -482,14 +509,11 @@ class JellyFishCard extends HTMLElement {
     return map;
   }
 
-  _deleteFolders() {
-    return this._config.delete_folders || [this._config.save_folder];
-  }
-
   _canDelete(p) {
-    if (!p || p.read_only) return false;
-    const folder = p.key.slice(0, p.key.lastIndexOf("/"));
-    return this._deleteFolders().includes(folder);
+    // The integration decides: only looks people saved, never stock patterns.
+    if (!p || !(p.deletable ?? false)) return false;
+    const only = this._config.delete_folders;
+    return !only || only.includes(p.key.slice(0, p.key.lastIndexOf("/")));
   }
 
   _holdStart(e) {
@@ -621,24 +645,68 @@ class JellyFishCard extends HTMLElement {
     return `<div class="folders">${chips}</div>${hint}`;
   }
 
+  _maxColors() {
+    return (this._catalog && this._catalog.max_colors) || 30;
+  }
+
+  _palette() {
+    // The controller's own named solid colors (the app's Colors folder), so the
+    // card offers the same shades as the JellyFish app. Whites first, then by hue.
+    const seen = new Set();
+    const out = [];
+    const folder = this._config.palette_folder || "Colors";
+    for (const f of (this._catalog && this._catalog.folders) || []) {
+      if (f.name !== folder) continue;
+      for (const p of f.patterns) {
+        const c = triples(p.colors);
+        if (c.length !== 1 || !lit(c[0]) || seen.has(c[0])) continue;
+        seen.add(c[0]);
+        out.push([c[0], p.name.trim()]);
+      }
+    }
+    const list = out.length ? out : PALETTE;
+    // Whites (by name — a 2700K white is technically a saturated orange — or
+    // by being nearly grey) come first, warm to cool; then colors by hue.
+    const isWhite = ([c, n]) => /white|warm|cool/i.test(n) || hsl(c)[1] < 0.2;
+    const coolness = (c) => {
+      const [r, , b] = hexToRgbRaw(c);
+      return b - r;
+    };
+    return [...list].sort((x, y) => {
+      const w1 = isWhite(x), w2 = isWhite(y);
+      if (w1 !== w2) return w1 ? -1 : 1;
+      if (w1) return coolness(x[0]) - coolness(y[0]);
+      const [h1, , l1] = hsl(x[0]);
+      const [h2, , l2] = hsl(y[0]);
+      return Math.round(h1 / 12) - Math.round(h2 / 12) || l2 - l1;
+    });
+  }
+
   _createView() {
     this._ensureDraft();
     const d = this._draft;
     const slots = d.colors
       .map(
         (c, i) => `<span class="slot-wrap">
-          <button class="slot" style="--c:${c}" data-act="slot" data-v="${i}" aria-label="Color ${i + 1}, change"></button>
+          <button class="slot ${lit(c) ? "" : "off"}" style="--c:${c}" data-act="slot" data-v="${i}" aria-label="Color ${i + 1}${lit(c) ? "" : " (off)"}, change"></button>
           <input class="picker" id="pick-${i}" type="color" value="${c}" data-pick="${i}" tabindex="-1" aria-hidden="true">
           ${d.colors.length > 1 ? `<button class="x" data-act="remove" data-v="${i}" aria-label="Remove color ${i + 1}">×</button>` : ""}
         </span>`
       )
       .join("");
+    const max = this._maxColors();
     const add =
-      d.colors.length < 8
-        ? `<div class="palette" aria-label="Add a color">${PALETTE.map(
-            (c) => `<button class="swatch" style="--c:${c}" data-act="add" data-v="${c}" aria-label="Add ${c}"></button>`
-          ).join("")}</div>`
-        : `<p class="hint">That's the most colors one look can use here.</p>`;
+      d.colors.length < max
+        ? `<div class="palette" aria-label="Add a color">${this._palette()
+            .map(
+              ([c, n]) =>
+                `<button class="swatch" style="--c:${c}" data-act="add" data-v="${c}" aria-label="Add ${esc(n)}" title="${esc(n)}"></button>`
+            )
+            .join("")}
+            <button class="swatch off" style="--c:${OFF}" data-act="add" data-v="${OFF}" aria-label="Add a gap (off)" title="Off (gap)"></button>
+            <button class="swatch any" data-act="any" aria-label="Any color" title="Any color…"></button>
+          </div>`
+        : `<p class="hint">That's the most colors the controller can use in one look (${max}).</p>`;
     const types = Object.keys(TYPE_HELP)
       .map(
         (t) =>
@@ -664,7 +732,7 @@ class JellyFishCard extends HTMLElement {
         </div>`;
     return `<div class="create">
         <div class="preview">${this._string(d.colors, { count: 24, cls: "glow", motion: moving ? d.type.toLowerCase() : "" })}</div>
-        <div class="row-head"><span>Colors</span><button class="link" data-act="from-current">Start from what's on</button></div>
+        <div class="row-head"><span>Colors <span class="sub">${d.colors.length} of ${max}</span></span><button class="link" data-act="from-current">Start from what's on</button></div>
         <div class="slots">${slots}</div>
         ${add}
         <div class="row-head"><span>Movement</span><span class="sub">${esc(TYPE_HELP[d.type])}</span></div>
@@ -762,6 +830,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--primary-col
 .picker { position: absolute; inset: 0; opacity: 0; pointer-events: none; width: 44px; height: 44px; }
 .x { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: var(--secondary-background-color, #444); line-height: 1; padding: 0; }
 .palette { display: flex; gap: 8px; flex-wrap: wrap; }
+.slot.off, .swatch.off { background: linear-gradient(135deg, transparent 46%, var(--secondary-text-color, #888) 46%, var(--secondary-text-color, #888) 54%, transparent 54%); box-shadow: none; border: 2px dashed var(--secondary-text-color, #888); }
+.swatch.any { background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); border: 1px solid var(--divider-color); }
 .swatch { width: 28px; height: 28px; border-radius: 50%; background: var(--c); border: 1px solid var(--divider-color); padding: 0; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .speed { display: flex; align-items: center; gap: 10px; }

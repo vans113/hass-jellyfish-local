@@ -35,14 +35,16 @@ entities: [light.jellyfish_all_zones, light.jellyfish_front, light.jellyfish_sid
 folders: [Accent, Colors, Halloween, Christmas, Custom]                            # only show these
 exclude_folders: [Home Assistant]                                                  # or hide these
 save_folder: Custom                                                                # where "Save as a look" goes
-delete_folders: [Custom]                                                           # hold-to-delete here (default: save_folder)
+delete_folders: [Custom]                                                           # optional: limit hold-to-delete
+palette_folder: Colors                                                             # solid colors offered in Make your own
 ```
 
 - **Looks**: every saved pattern by folder, each with a preview of its colors. Tap to play.
 - **Make your own**: pick colors, choose how they move (Solid, Chase, Paint, Stacker, Sequence, Multi-Paint), plus speed, direction and gap. **Show it on the house** runs it. **Save as a look** stores it on the controller under a name, so it shows up in Home Assistant and in the JellyFish app.
 - A live roofline at the top shows the colors that are on.
 - A **speed** slider appears under brightness while an animated look is playing.
-- **Press and hold** a look in your save folder to delete it (right-click on a computer). The card asks first. Built-in patterns can't be deleted.
+- **Press and hold** one of your own saved looks to delete it (right-click on a computer). The card asks first. Stock patterns, meaning everything in the app's own folders (Colors, Accent, Halloween, …), can never be deleted.
+- **Make your own** offers every solid color from the controller's Colors folder, an *Off* swatch for gaps, and *Any color…* for the full picker, up to the controller's 30 colors per look.
 
 ### Custom patterns and live tweaks
 
@@ -59,7 +61,7 @@ data:
   brightness_pct: 70
 ```
 
-`jellyfish_local.adjust_pattern` changes parts of what's running (any of the same fields). `jellyfish_local.save_pattern` (`name`, optional `folder`) saves what's running as a named pattern. `jellyfish_local.delete_pattern` (`pattern: Folder/Name`) deletes a saved one; the controller's write-protected factory patterns are refused.
+`jellyfish_local.adjust_pattern` changes parts of what's running (any of the same fields). `jellyfish_local.save_pattern` (`name`, optional `folder`) saves what's running as a named pattern. `jellyfish_local.delete_pattern` (`pattern: Folder/Name`) deletes one of your saved looks; stock patterns are refused.
 
 Looks made in the JellyFish app without saving show up as **"Custom: Warm White + Red Orange"**, named after their colors.
 

@@ -641,6 +641,12 @@ async def test_delete_pattern_websocket(
     folders = (await ws.receive_json())["result"]["folders"]
     flags = {p["key"]: p["read_only"] for f in folders for p in f["patterns"]}
     assert flags["Christmas/Candy Cane"] is True and flags["Everyday/Warm White"] is False
+    deletable = {p["key"]: p["deletable"] for f in folders for p in f["patterns"]}
+    assert deletable == {
+        "Christmas/Candy Cane": False,
+        "Everyday/Warm White": True,
+        "Halloween/Spooky": False,
+    }
     await ws.send_json(
         {
             "id": 2,

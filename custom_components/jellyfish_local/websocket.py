@@ -68,6 +68,7 @@ async def ws_catalog(
                 "type": cfg.get("type"),
                 "colors": cfg.get("colors") or [],
                 "read_only": key in data.read_only,
+                "deletable": client.is_deletable(key),
             }
         )
     favorites = list(coordinator.config_entry.options.get("favorites", []))

@@ -15,6 +15,30 @@ EFFECTS_BETWEEN = ["No Color Transform", "Repeat", "Progression", "Fade", "Fill 
 
 MAX_COLORS = 30  # controller limit (90 values)
 
+# Folders the JellyFish app ships with. Their patterns are the stock looks, so
+# they're never deletable from Home Assistant, even the ones the controller
+# itself leaves unprotected (it marks many of the Colors / Accent ones writable).
+STOCK_FOLDERS = frozenset(
+    {
+        "Accent",
+        "Autumn",
+        "Christmas",
+        "Colors",
+        "Easter",
+        "Halloween",
+        "Holidays",
+        "Independence Day",
+        "Legacy",
+        "Special Effects",
+        "Spring",
+        "St Patrick's Day",
+        "Thanksgiving",
+        "Valentine's Day",
+        "Warm Cool",
+        "Winter",
+    }
+)
+
 # Speed on the wire: 1 is fastest, bigger is slower. Users get the opposite
 # (1 = slowest, 100 = fastest) because that's what a slider should mean.
 SPEED_MIN, SPEED_MAX = 1, 100

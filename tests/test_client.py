@@ -275,10 +275,16 @@ def test_color_names():
 async def test_delete_pattern(client, fake):
     from custom_components.jellyfish_local.patterns import build_config
 
+    # A stock color the controller leaves writable, like the real box does.
+    fake.pattern_configs["Colors/Red"] = {"type": "Color", "colors": [255, 0, 0]}
     await client.connect()
     await client.refresh_all()
     assert "Christmas/Candy Cane" in client.data.read_only
-    assert "Everyday/Warm White" not in client.data.read_only
+    assert "Colors/Red" not in client.data.read_only
+    assert not client.is_deletable("Colors/Red")  # stock folder: protected anyway
+    with pytest.raises(ValueError):
+        await client.delete_pattern("Colors/Red")
+    assert "Colors/Red" in fake.pattern_configs
     key = await client.save_pattern("Mine", "Custom", build_config("Color", [[1, 2, 3]], 50))
     assert key in client.data.patterns
     await client.delete_pattern(key)

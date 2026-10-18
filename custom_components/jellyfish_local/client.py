@@ -25,7 +25,7 @@ from typing import Any
 
 import aiohttp
 
-from .patterns import build_config, describe_colors, merge_config
+from .patterns import STOCK_FOLDERS, build_config, describe_colors, merge_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -645,14 +645,24 @@ class JellyFishClient:
             self.data.patterns = sorted([*self.data.patterns, key], key=str.casefold)
         return key
 
+    def is_deletable(self, key: str) -> bool:
+        """Only looks people saved themselves: not write-protected, not stock."""
+        folder = key.rpartition("/")[0]
+        return (
+            key in self.data.patterns
+            and key not in self.data.read_only
+            and folder not in STOCK_FOLDERS
+        )
+
     async def delete_pattern(self, key: str) -> None:
         """Remove a saved pattern from the controller.
 
-        Factory patterns the controller marks read-only are refused.
+        Stock patterns (write-protected ones and anything in the app's own
+        folders) are refused, so only custom looks can be deleted.
         """
         if key not in self.data.patterns:
             raise ValueError(f"Unknown pattern: {key}")
-        if key in self.data.read_only:
+        if not self.is_deletable(key):
             raise ValueError(f"{key} is a built-in pattern and can't be deleted")
         folder, _, name = key.rpartition("/")
         await self._send(
