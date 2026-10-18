@@ -20,6 +20,7 @@ from .patterns import DIRECTIONS, EFFECTS_BETWEEN, MAX_COLORS, PATTERN_TYPES
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_catalog)
     websocket_api.async_register_command(hass, ws_set_favorites)
+    websocket_api.async_register_command(hass, ws_delete_pattern)
 
 
 def _coordinator_for(hass: HomeAssistant, entity_id: str):
@@ -66,6 +67,7 @@ async def ws_catalog(
                 "name": name,
                 "type": cfg.get("type"),
                 "colors": cfg.get("colors") or [],
+                "read_only": key in data.read_only,
             }
         )
     favorites = list(coordinator.config_entry.options.get("favorites", []))
@@ -109,3 +111,30 @@ async def ws_set_favorites(
     entry = coordinator.config_entry
     hass.config_entries.async_update_entry(entry, options={**entry.options, "favorites": favorites})
     connection.send_result(msg["id"], {"favorites": favorites})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "jellyfish_local/delete_pattern",
+        vol.Required("entity_id"): str,
+        vol.Required("pattern"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_delete_pattern(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Delete a saved pattern from the controller (the card's hold-to-delete)."""
+    coordinator = _coordinator_for(hass, msg["entity_id"])
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "No JellyFish controller for that entity")
+        return
+    try:
+        favorites = await coordinator.async_delete_pattern(msg["pattern"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_pattern", str(err))
+        return
+    except JellyFishError as err:
+        connection.send_error(msg["id"], "controller_error", str(err))
+        return
+    connection.send_result(msg["id"], {"deleted": msg["pattern"], "favorites": favorites})

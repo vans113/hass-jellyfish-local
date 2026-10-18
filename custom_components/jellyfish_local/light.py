@@ -28,12 +28,14 @@ from .const import (
     ATTR_EFFECT_BETWEEN,
     ATTR_FOLDER,
     ATTR_NAME,
+    ATTR_PATTERN,
     ATTR_PATTERN_TYPE,
     ATTR_SPACING,
     ATTR_SPEED,
     DEFAULT_SAVE_FOLDER,
     SERVICE_ADJUST_PATTERN,
     SERVICE_APPLY_LIGHT_STRING,
+    SERVICE_DELETE_PATTERN,
     SERVICE_RUN_PATTERN,
     SERVICE_SAVE_PATTERN,
 )
@@ -71,6 +73,9 @@ _PATTERN_FIELDS = {
 COLORS_SCHEMA = vol.All(cv.ensure_list, [RGB_SCHEMA], vol.Length(min=1, max=MAX_COLORS))
 RUN_PATTERN_SCHEMA = {vol.Required(ATTR_COLORS): COLORS_SCHEMA, **_PATTERN_FIELDS}
 ADJUST_PATTERN_SCHEMA = {vol.Optional(ATTR_COLORS): COLORS_SCHEMA, **_PATTERN_FIELDS}
+DELETE_PATTERN_SCHEMA = {
+    vol.Required(ATTR_PATTERN): vol.All(cv.string, vol.Length(min=3)),
+}
 SAVE_PATTERN_SCHEMA = {
     vol.Required(ATTR_NAME): vol.All(cv.string, vol.Length(min=1, max=60)),
     vol.Optional(ATTR_FOLDER, default=DEFAULT_SAVE_FOLDER): vol.All(
@@ -125,6 +130,9 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_SAVE_PATTERN, SAVE_PATTERN_SCHEMA, "async_save_pattern"
+    )
+    platform.async_register_entity_service(
+        SERVICE_DELETE_PATTERN, DELETE_PATTERN_SCHEMA, "async_delete_pattern"
     )
 
 
@@ -319,6 +327,10 @@ class _JellyFishLight(LightEntity):
     async def async_save_pattern(self, name: str, folder: str = DEFAULT_SAVE_FOLDER) -> None:
         """Save what's running on the first zone as a named pattern on the controller."""
         await self._command(self.coordinator.client.save_running(name, folder, self._zones[0]))
+
+    async def async_delete_pattern(self, pattern: str) -> None:
+        """Delete a saved (non-factory) pattern from the controller."""
+        await self._command(self.coordinator.async_delete_pattern(pattern))
 
 
 class JellyFishZoneLight(_JellyFishLight, JellyFishZoneEntity):

@@ -117,3 +117,15 @@ save_pattern:
       default: Home Assistant
       selector:
         text:
+
+delete_pattern:
+  target:
+    entity:
+      integration: jellyfish_local
+      domain: light
+  fields:
+    pattern:
+      required: true
+      example: "Custom/Purple + Orange"
+      selector:
+        text:

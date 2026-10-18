@@ -631,3 +631,66 @@ async def test_favorites_websocket(hass: HomeAssistant, setup, hass_ws_client) -
         "Christmas/Candy Cane",
     ]
     assert setup.options["favorites"] == ["Halloween/Spooky", "Christmas/Candy Cane"]
+
+
+async def test_delete_pattern_websocket(
+    hass: HomeAssistant, setup, hass_ws_client, fake: FakeController
+) -> None:
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "jellyfish_local/catalog", "entity_id": FRONT})
+    folders = (await ws.receive_json())["result"]["folders"]
+    flags = {p["key"]: p["read_only"] for f in folders for p in f["patterns"]}
+    assert flags["Christmas/Candy Cane"] is True and flags["Everyday/Warm White"] is False
+    await ws.send_json(
+        {
+            "id": 2,
+            "type": "jellyfish_local/set_favorites",
+            "entity_id": FRONT,
+            "favorites": ["Everyday/Warm White", "Halloween/Spooky"],
+        }
+    )
+    await ws.receive_json()
+    # Factory pattern: refused, nothing sent.
+    await ws.send_json(
+        {
+            "id": 3,
+            "type": "jellyfish_local/delete_pattern",
+            "entity_id": FRONT,
+            "pattern": "Halloween/Spooky",
+        }
+    )
+    res = await ws.receive_json()
+    assert not res["success"] and res["error"]["code"] == "invalid_pattern"
+    assert "Halloween/Spooky" in fake.pattern_configs
+    # A saved pattern: deleted, dropped from favorites and from the select options.
+    await ws.send_json(
+        {
+            "id": 4,
+            "type": "jellyfish_local/delete_pattern",
+            "entity_id": FRONT,
+            "pattern": "Everyday/Warm White",
+        }
+    )
+    res = await ws.receive_json()
+    assert res["success"] and res["result"]["favorites"] == ["Halloween/Spooky"]
+    assert "Everyday/Warm White" not in fake.pattern_configs
+    assert setup.options["favorites"] == ["Halloween/Spooky"]
+    await settle(hass)
+    assert "Everyday/Warm White" not in hass.states.get(SELECT_FRONT).attributes["options"]
+
+
+async def test_delete_pattern_service(hass: HomeAssistant, setup, fake: FakeController) -> None:
+    await hass.services.async_call(
+        DOMAIN,
+        "delete_pattern",
+        {ATTR_ENTITY_ID: FRONT, "pattern": "Everyday/Warm White"},
+        blocking=True,
+    )
+    assert "Everyday/Warm White" not in fake.pattern_configs
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            "delete_pattern",
+            {ATTR_ENTITY_ID: FRONT, "pattern": "Christmas/Candy Cane"},
+            blocking=True,
+        )

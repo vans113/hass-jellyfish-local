@@ -270,3 +270,23 @@ def test_color_names():
     )
     assert describe_colors([0, 0, 0]) == "Custom Color"
     assert ui_speed_to_wire(100) == 1 and wire_speed_to_ui(1) == 100
+
+
+async def test_delete_pattern(client, fake):
+    from custom_components.jellyfish_local.patterns import build_config
+
+    await client.connect()
+    await client.refresh_all()
+    assert "Christmas/Candy Cane" in client.data.read_only
+    assert "Everyday/Warm White" not in client.data.read_only
+    key = await client.save_pattern("Mine", "Custom", build_config("Color", [[1, 2, 3]], 50))
+    assert key in client.data.patterns
+    await client.delete_pattern(key)
+    sent = fake.sent_commands()[-1]
+    assert sent["patternFileDelete"] == {"folders": "Custom", "name": "Mine"}
+    assert key not in client.data.patterns and key not in fake.pattern_configs
+    with pytest.raises(ValueError):
+        await client.delete_pattern("Christmas/Candy Cane")  # factory pattern
+    with pytest.raises(ValueError):
+        await client.delete_pattern("Nope/Nope")
+    assert "Christmas/Candy Cane" in fake.pattern_configs

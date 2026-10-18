@@ -116,6 +116,8 @@ class ControllerData:
     patterns: list[str] = field(default_factory=list)
     zone_states: dict[str, ZoneState] = field(default_factory=dict)
     pattern_configs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Patterns the controller marks write-protected (factory patterns).
+    read_only: set[str] = field(default_factory=set)
 
 
 def custom_label(file: str = "", colors: list[int] | None = None) -> str:
@@ -362,10 +364,15 @@ class JellyFishClient:
             handled_key = KEY_ZONES
         elif KEY_PATTERN_LIST in msg:
             names = []
+            protected = set()
             for item in msg[KEY_PATTERN_LIST] or []:
                 if item.get("name"):  # entries without a name are folders
-                    names.append(f"{item.get('folders', '')}/{item['name']}")
+                    key = f"{item.get('folders', '')}/{item['name']}"
+                    names.append(key)
+                    if item.get("readOnly"):
+                        protected.add(key)
             data.patterns = sorted(names, key=str.casefold)
+            data.read_only = protected
             handled_key = KEY_PATTERN_LIST
         elif KEY_ZONE_STATE in msg:
             payload = msg[KEY_ZONE_STATE] or {}
@@ -637,6 +644,29 @@ class JellyFishClient:
         if key not in self.data.patterns:
             self.data.patterns = sorted([*self.data.patterns, key], key=str.casefold)
         return key
+
+    async def delete_pattern(self, key: str) -> None:
+        """Remove a saved pattern from the controller.
+
+        Factory patterns the controller marks read-only are refused.
+        """
+        if key not in self.data.patterns:
+            raise ValueError(f"Unknown pattern: {key}")
+        if key in self.data.read_only:
+            raise ValueError(f"{key} is a built-in pattern and can't be deleted")
+        folder, _, name = key.rpartition("/")
+        await self._send(
+            {"cmd": "toCtlrSet", "patternFileDelete": {"folders": folder, "name": name}}
+        )
+        self.data.patterns = [p for p in self.data.patterns if p != key]
+        self.data.pattern_configs.pop(key, None)
+        try:
+            await self.refresh_patterns()
+        except JellyFishTimeoutError:
+            _LOGGER.debug("Pattern list not refreshed after delete; will catch up later")
+        # The controller may lag; make sure the deleted key stays gone locally.
+        self.data.patterns = [p for p in self.data.patterns if p != key]
+        self._notify()
 
     async def save_running(self, name: str, folder: str, zone: str) -> str:
         base, _ = await self._base_config(self._zones([zone])[0])

@@ -91,6 +91,21 @@ class JellyFishCoordinator(DataUpdateCoordinator[ControllerData]):
         if notify:
             self.async_set_updated_data(self.client.data)
 
+    async def async_delete_pattern(self, key: str) -> list[str]:
+        """Delete a saved pattern and drop it from the card's favorites.
+
+        Returns the favorites list as it is afterwards.
+        """
+        await self.client.delete_pattern(key)
+        entry = self.config_entry
+        favorites = [k for k in entry.options.get("favorites", []) if k != key]
+        if favorites != list(entry.options.get("favorites", [])):
+            self.hass.config_entries.async_update_entry(
+                entry, options={**entry.options, "favorites": favorites}
+            )
+        self.async_set_updated_data(self.client.data)
+        return favorites
+
     async def async_shutdown(self) -> None:
         """Close the websocket; the controller only allows one."""
         await super().async_shutdown()

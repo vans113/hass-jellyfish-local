@@ -158,6 +158,16 @@
           "description": "Folder to save it in (default: Home Assistant)."
         }
       }
+    },
+    "delete_pattern": {
+      "name": "Delete pattern",
+      "description": "Delete a saved pattern from the controller. Built-in (factory) patterns can't be deleted.",
+      "fields": {
+        "pattern": {
+          "name": "Pattern",
+          "description": "Pattern to delete, as Folder/Name (for example Custom/Purple + Orange)."
+        }
+      }
     }
   }
 }

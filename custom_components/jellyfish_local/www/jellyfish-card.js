@@ -10,8 +10,10 @@
  *   folders: [Colors, Halloween]       # optional: only show these folders
  *   exclude_folders: [Home Assistant]  # optional: hide these folders
  *   save_folder: Custom                # optional (where "Save as a look" stores)
+ *   delete_folders: [Custom]           # optional: folders where holding a look offers
+ *                                      #   to delete it (default: save_folder)
  */
-const VERSION = "0.4.1";
+const VERSION = "0.5.0";
 
 const PALETTE = [
   "#ffbe6e", "#ffffff", "#ff0000", "#ff3200", "#ff6400", "#ffc828",
@@ -68,6 +70,18 @@ class JellyFishCard extends HTMLElement {
       this.shadowRoot.addEventListener("input", (e) => this._onInput(e));
       this.shadowRoot.addEventListener("change", (e) => this._onChange(e));
       this.shadowRoot.addEventListener("keydown", (e) => this._onKey(e));
+      // Hold a saved look to delete it (right-click does the same on desktop).
+      this.shadowRoot.addEventListener("pointerdown", (e) => this._holdStart(e));
+      for (const ev of ["pointerup", "pointercancel"]) {
+        this.shadowRoot.addEventListener(ev, () => this._holdCancel());
+      }
+      this.shadowRoot.addEventListener("pointermove", (e) => this._holdMove(e));
+      this.shadowRoot.addEventListener("contextmenu", (e) => {
+        const t = e.target.closest("[data-hold]");
+        if (!t) return;
+        e.preventDefault();
+        this._askDelete(t.dataset.hold);
+      });
     }
     this._render();
   }
@@ -151,6 +165,13 @@ class JellyFishCard extends HTMLElement {
 
   // ------------------------------------------------------------------ events
   _onClick(e) {
+    if (this._suppressClick) {
+      // The release after a long-press shouldn't also play the look (or hit the
+      // Delete button that just appeared under the finger). Some devices send no
+      // click after a long-press, so the flag also expires on its own.
+      this._suppressClick = false;
+      if (Date.now() < (this._suppressUntil || 0)) return;
+    }
     const t = e.target.closest("[data-act]");
     if (!t) return;
     const act = t.dataset.act;
@@ -180,6 +201,13 @@ class JellyFishCard extends HTMLElement {
         break;
       case "fav":
         this._toggleFav(v);
+        break;
+      case "del-yes":
+        this._deletePattern(v);
+        break;
+      case "del-no":
+        this._confirmDelete = null;
+        this._render();
         break;
       case "slot":
         this._draft.editing = Number(v);
@@ -454,6 +482,65 @@ class JellyFishCard extends HTMLElement {
     return map;
   }
 
+  _deleteFolders() {
+    return this._config.delete_folders || [this._config.save_folder];
+  }
+
+  _canDelete(p) {
+    if (!p || p.read_only) return false;
+    const folder = p.key.slice(0, p.key.lastIndexOf("/"));
+    return this._deleteFolders().includes(folder);
+  }
+
+  _holdStart(e) {
+    // A new press: any click swallowed after the last long-press is done with.
+    this._suppressClick = false;
+    const t = e.target.closest("[data-hold]");
+    if (!t || (e.pointerType === "mouse" && e.button !== 0)) return;
+    this._holdCancel();
+    this._holdXY = [e.clientX, e.clientY];
+    this._holdTimer = setTimeout(() => {
+      this._holdTimer = null;
+      this._suppressClick = true;
+      this._suppressUntil = Date.now() + 700;
+      if (navigator.vibrate) navigator.vibrate(15);
+      this._askDelete(t.dataset.hold);
+    }, 550);
+  }
+
+  _holdMove(e) {
+    if (!this._holdTimer || !this._holdXY) return;
+    // Scrolling the list isn't a hold.
+    if (Math.hypot(e.clientX - this._holdXY[0], e.clientY - this._holdXY[1]) > 10) this._holdCancel();
+  }
+
+  _holdCancel() {
+    if (this._holdTimer) clearTimeout(this._holdTimer);
+    this._holdTimer = null;
+  }
+
+  _askDelete(key) {
+    this._confirmDelete = key;
+    this._render();
+  }
+
+  async _deletePattern(key) {
+    const name = key.slice(key.lastIndexOf("/") + 1).trim();
+    this._confirmDelete = null;
+    try {
+      const res = await this._hass.callWS({
+        type: "jellyfish_local/delete_pattern",
+        entity_id: this._active,
+        pattern: key,
+      });
+      this._favorites = new Set(res.favorites || []);
+      this._toast(`Deleted "${name}"`);
+    } catch (err) {
+      this._toast(err && err.message ? err.message : `Couldn't delete "${name}"`);
+    }
+    await this._loadCatalog(true);
+  }
+
   async _toggleFav(key) {
     this._favorites = this._favorites || new Set();
     if (this._favorites.has(key)) this._favorites.delete(key);
@@ -504,18 +591,33 @@ class JellyFishCard extends HTMLElement {
       .map((p) => {
         const sel = p.key === effect;
         const isFav = favs.has(p.key);
+        const name = esc(p.name.trim());
+        if (this._confirmDelete === p.key) {
+          return `<div class="look confirm" role="alertdialog" aria-label="Delete ${name}?">
+            <span class="confirm-q">Delete &ldquo;${name}&rdquo;?</span>
+            <span class="confirm-btns">
+              <button class="btn danger" data-act="del-yes" data-v="${esc(p.key)}">Delete</button>
+              <button class="btn" data-act="del-no">Cancel</button>
+            </span>
+          </div>`;
+        }
+        const hold = this._canDelete(p) ? ` data-hold="${esc(p.key)}"` : "";
         return `<div class="look ${sel ? "sel" : ""}">
-            <button class="look-play" data-act="look" data-v="${esc(p.key)}" aria-pressed="${sel}">
+            <button class="look-play" data-act="look" data-v="${esc(p.key)}" aria-pressed="${sel}"${hold}>
               ${this._string(triples(p.colors), { count: MAX_SWATCH, cls: "mini" })}
-              <span class="look-name">${esc(p.name.trim())}</span>
+              <span class="look-name">${name}</span>
             </button>
             <button class="fav ${isFav ? "on" : ""}" data-act="fav" data-v="${esc(p.key)}" aria-pressed="${isFav}" aria-label="${isFav ? "Remove favorite" : "Add favorite"}" title="${isFav ? "Remove favorite" : "Add favorite"}">${isFav ? "&#9733;" : "&#9734;"}</button>
           </div>`;
       })
       .join("");
+    const holdHint =
+      !showingFavs && patterns.some((p) => this._canDelete(p))
+        ? `<p class="hint hold-hint">Press and hold a look to delete it.</p>`
+        : "";
     const hint = showingFavs && !patterns.length
       ? `<div class="empty">No favorites yet. Tap the &#9734; on any look to add it here.</div>`
-      : `<div class="grid">${tiles}</div>`;
+      : `<div class="grid">${tiles}</div>${holdHint}`;
     return `<div class="folders">${chips}</div>${hint}`;
   }
 
@@ -640,6 +742,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--primary-col
 .look-name { font-size: .92rem; line-height: 1.25; }
 .fav { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; color: var(--secondary-text-color); font-size: 1.1rem; line-height: 1; padding: 0; }
 .fav.on { color: #f5c518; }
+.look-play[data-hold] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.look.confirm { display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 10px 12px; border-color: var(--error-color, #db4437); }
+.confirm-q { font-size: .92rem; line-height: 1.25; }
+.confirm-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.confirm-btns .btn { padding: 6px 12px; }
+.btn.danger { background: var(--error-color, #db4437); color: #fff; border-color: transparent; }
+.hold-hint { padding: 8px 16px 0; }
 .folders { -webkit-mask-image: linear-gradient(90deg, #000 94%, transparent); mask-image: linear-gradient(90deg, #000 94%, transparent); }
 
 .create { padding: 0 16px; display: flex; flex-direction: column; gap: 12px; }

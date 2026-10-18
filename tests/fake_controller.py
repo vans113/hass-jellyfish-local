@@ -89,6 +89,8 @@ class FakeController:
             },
         }
         self.pattern_configs = copy.deepcopy(PATTERN_CONFIGS)
+        # Like the real box: factory patterns are write-protected, others aren't.
+        self.read_only = {"Christmas/Candy Cane", "Halloween/Spooky"}
         self.states: dict[str, dict[str, Any]] = {
             zone: {
                 "state": 0,
@@ -177,6 +179,11 @@ class FakeController:
         elif payload.get("cmd") == "toCtlrSet" and "patternFileData" in payload:
             pf = payload["patternFileData"]
             self.pattern_configs[f"{pf['folders']}/{pf['name']}"] = json.loads(pf["jsonData"])
+        elif payload.get("cmd") == "toCtlrSet" and "patternFileDelete" in payload:
+            pf = payload["patternFileDelete"]
+            key = f"{pf['folders']}/{pf['name']}"
+            if key not in self.read_only:
+                self.pattern_configs.pop(key, None)
         elif payload.get("cmd") == "toCtlrSet" and "runPattern" in payload:
             run = payload["runPattern"]
             for zone in run["zoneName"]:
@@ -205,7 +212,11 @@ class FakeController:
             folders = sorted({p.split("/")[0] for p in self.pattern_configs})
             items = [{"folders": f, "name": "", "readOnly": False} for f in folders]
             items += [
-                {"folders": p.split("/")[0], "name": p.split("/")[1], "readOnly": True}
+                {
+                    "folders": p.split("/")[0],
+                    "name": p.split("/")[1],
+                    "readOnly": p in self.read_only,
+                }
                 for p in self.pattern_configs
             ]
             await self._send({"cmd": "fromCtlr", "patternFileList": items})
