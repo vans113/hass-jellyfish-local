@@ -11,7 +11,7 @@
  *   exclude_folders: [Home Assistant]  # optional: hide these folders
  *   save_folder: Custom                # optional (where "Save as a look" stores)
  */
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 
 const PALETTE = [
   "#ffbe6e", "#ffffff", "#ff0000", "#ff3200", "#ff6400", "#ffc828",
