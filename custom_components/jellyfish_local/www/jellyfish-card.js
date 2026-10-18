@@ -11,7 +11,7 @@
  *   exclude_folders: [Home Assistant]  # optional: hide these folders
  *   save_folder: Custom                # optional (where "Save as a look" stores)
  */
-const VERSION = "0.3.4";
+const VERSION = "0.4.0";
 
 const PALETTE = [
   "#ffbe6e", "#ffffff", "#ff0000", "#ff3200", "#ff6400", "#ffc828",
@@ -236,6 +236,9 @@ class JellyFishCard extends HTMLElement {
     if (t.id === "bright") {
       this._dragging = true;
       this.shadowRoot.querySelector("#bright-val").textContent = `${t.value}%`;
+    } else if (t.id === "live-speed") {
+      this._dragging = true;
+      this.shadowRoot.querySelector("#live-speed-val").textContent = this._speedWord(Number(t.value));
     } else if (t.id === "speed") {
       this._draft.speed = Number(t.value);
       this.shadowRoot.querySelector("#speed-val").textContent = this._speedWord(this._draft.speed);
@@ -253,6 +256,9 @@ class JellyFishCard extends HTMLElement {
     if (t.id === "bright") {
       this._dragging = false;
       this._call("light", "turn_on", { brightness_pct: Number(t.value) });
+    } else if (t.id === "live-speed") {
+      this._dragging = false;
+      this._call("jellyfish_local", "adjust_pattern", { speed: Number(t.value) });
     } else if (t.dataset.pick !== undefined) {
       this._render();
     }
@@ -363,6 +369,10 @@ class JellyFishCard extends HTMLElement {
     const look = effect ? effect.split("/").pop() : colors.length ? "Solid color" : "";
     const status = unavailable ? "Controller offline" : on ? `${look}${look ? ", " : ""}${pct}%` : "Off";
     const motion = on && a.pattern_type && a.pattern_type !== "Color" ? a.pattern_type.toLowerCase() : "";
+    // A speed slider on the main card, shown only when an animated look is
+    // playing (hidden for solid colors, which have no speed).
+    const animated = on && !unavailable && effect && a.pattern_type && a.pattern_type !== "Color";
+    const spd = Number.isFinite(a.speed) ? a.speed : 50;
     const name = this._config.name || a.friendly_name || "JellyFish";
 
     const zones =
@@ -396,6 +406,15 @@ class JellyFishCard extends HTMLElement {
           <input id="bright" type="range" min="1" max="100" value="${pct || 100}" aria-label="Brightness" ${unavailable ? "disabled" : ""}>
           <span id="bright-val">${pct || 100}%</span>
         </label>
+        ${
+          animated
+            ? `<label class="bright">
+          <ha-icon icon="mdi:speedometer"></ha-icon>
+          <input id="live-speed" type="range" min="1" max="100" value="${spd}" aria-label="Speed">
+          <span id="live-speed-val">${this._speedWord(spd)}</span>
+        </label>`
+            : ""
+        }
         <div class="tabs" role="tablist">
           <button role="tab" aria-selected="${this._tab === "looks"}" class="${this._tab === "looks" ? "sel" : ""}" data-act="tab" data-v="looks">Looks</button>
           <button role="tab" aria-selected="${this._tab === "create"}" class="${this._tab === "create" ? "sel" : ""}" data-act="tab" data-v="create">Make your own</button>
@@ -603,6 +622,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--primary-col
 .bright { display: flex; align-items: center; gap: 10px; padding: 4px 16px 12px; color: var(--secondary-text-color); }
 .bright input, .speed input { flex: 1; accent-color: var(--primary-color); min-height: 28px; }
 #bright-val { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--primary-text-color); }
+#live-speed-val { width: 4.5em; text-align: right; color: var(--secondary-text-color); }
 
 .tabs { display: flex; margin: 0 16px 12px; border-bottom: 1px solid var(--divider-color); }
 .tabs button { flex: 1; background: none; border: 0; padding: 10px 0; color: var(--secondary-text-color); border-bottom: 2px solid transparent; margin-bottom: -1px; }
