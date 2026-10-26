@@ -5,9 +5,6 @@
     "frontend",
     "http"
   ],
-  "categories": [
-    "lighting.led_strips_controllers"
-  ],
   "codeowners": [
     "@vans113"
   ],
