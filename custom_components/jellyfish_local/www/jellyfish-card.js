@@ -14,7 +14,7 @@
  *                                      #   (stock patterns can never be deleted)
  *   palette_folder: Colors             # optional: folder whose solid colors fill the palette
  */
-const VERSION = "0.5.1";
+const VERSION = "0.5.2";
 
 // Used only when the controller's Colors folder isn't available.
 const PALETTE = [
