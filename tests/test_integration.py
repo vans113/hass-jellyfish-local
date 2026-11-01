@@ -522,7 +522,7 @@ async def test_run_pattern_service_and_tweak_entities(
             ATTR_ENTITY_ID: FRONT,
             "colors": [[255, 100, 0], [128, 0, 128]],
             "pattern_type": "Chase",
-            "speed": 80,
+            "speed": 15,
             "direction": "Right",
             "brightness_pct": 60,
         },
@@ -531,11 +531,11 @@ async def test_run_pattern_service_and_tweak_entities(
     await settle(hass)
     st = hass.states.get(FRONT)
     assert st.attributes["colors"] == ["#ff6400", "#800080"]
-    assert st.attributes["pattern_type"] == "Chase" and st.attributes["speed"] == 80
+    assert st.attributes["pattern_type"] == "Chase" and st.attributes["speed"] == 15
     assert st.attributes[ATTR_EFFECT] == "Custom: Orange + Magenta"
     assert hass.states.get("select.front_house_front_effect_type").state == "Chase"
     assert hass.states.get("select.front_house_front_direction").state == "Right"
-    assert float(hass.states.get("number.front_house_front_speed").state) == 80
+    assert float(hass.states.get("number.front_house_front_speed").state) == 15
 
     await hass.services.async_call(
         "number",
@@ -553,7 +553,7 @@ async def test_run_pattern_service_and_tweak_entities(
     data = json.loads(fake.sent_commands()[-1]["runPattern"]["data"])
     assert (
         data["type"] == "Paint"
-        and data["runData"]["speed"] == 81
+        and data["runData"]["speed"] == 20
         and data["colors"] == [255, 100, 0, 128, 0, 128]
     )
 
@@ -565,7 +565,7 @@ async def test_tweak_saved_pattern(hass: HomeAssistant, setup, fake: FakeControl
         if hass.states.get("select.front_house_front_effect_type").state == "Chase":
             break
     assert hass.states.get("select.front_house_front_effect_type").state == "Chase"
-    assert float(hass.states.get("number.front_house_front_speed").state) == 91  # wire 10
+    assert float(hass.states.get("number.front_house_front_speed").state) == 38  # wire 10
     await hass.services.async_call(
         DOMAIN, "adjust_pattern", {ATTR_ENTITY_ID: FRONT, "speed": 100}, blocking=True
     )
@@ -698,5 +698,63 @@ async def test_delete_pattern_service(hass: HomeAssistant, setup, fake: FakeCont
             DOMAIN,
             "delete_pattern",
             {ATTR_ENTITY_ID: FRONT, "pattern": "Christmas/Candy Cane"},
+            blocking=True,
+        )
+
+
+async def test_breathe_ramps_and_any_command_stops_it(
+    hass: HomeAssistant, setup, fake: FakeController
+) -> None:
+    await call(hass, "turn_on", ALL, **{ATTR_EFFECT: "Christmas/Candy Cane", ATTR_BRIGHTNESS: 128})
+    await hass.services.async_call(
+        DOMAIN,
+        "breathe",
+        {ATTR_ENTITY_ID: ALL, "low": 20, "high": 50, "period": 2},
+        blocking=True,
+    )
+    attrs = hass.states.get(ALL).attributes
+    assert attrs["breathing"] == {"low": 20, "high": 50, "period": 2.0}
+    assert attrs[ATTR_BRIGHTNESS] == 128  # holds at the top of the breath
+    assert "breathing" in hass.states.get(FRONT).attributes  # each zone shows it too
+    start = len(fake.sent_commands())
+    await asyncio.sleep(0.8)
+    levels = [
+        json.loads(c["runPattern"]["data"])["runData"]["brightness"]
+        for c in fake.sent_commands()[start:]
+        if c.get("runPattern", {}).get("data")
+    ]
+    assert len(levels) >= 3
+    assert min(levels) < 50 and all(20 <= level <= 50 for level in levels)
+    # Picking a look stops it, and nothing else gets sent afterwards.
+    await call(hass, "turn_on", ALL, **{ATTR_EFFECT: "Halloween/Spooky"})
+    assert "breathing" not in hass.states.get(ALL).attributes
+    after = len(fake.sent_commands())
+    await asyncio.sleep(0.5)
+    assert len(fake.sent_commands()) == after
+
+
+async def test_stop_breathe_restores_top_brightness(
+    hass: HomeAssistant, setup, fake: FakeController
+) -> None:
+    await call(
+        hass, "turn_on", FRONT, **{ATTR_EFFECT: "Christmas/Candy Cane", ATTR_BRIGHTNESS: 128}
+    )
+    await hass.services.async_call(
+        DOMAIN, "breathe", {ATTR_ENTITY_ID: FRONT, "period": 2}, blocking=True
+    )
+    assert hass.states.get(FRONT).attributes["breathing"]["high"] == 50  # from current
+    await asyncio.sleep(0.4)
+    await hass.services.async_call(DOMAIN, "stop_breathe", {ATTR_ENTITY_ID: FRONT}, blocking=True)
+    await settle(hass)
+    state = hass.states.get(FRONT)
+    assert "breathing" not in state.attributes
+    assert state.attributes[ATTR_BRIGHTNESS] == 128
+    last = json.loads(fake.sent_commands()[-1]["runPattern"]["data"])
+    assert last["runData"]["brightness"] == 50
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            "breathe",
+            {ATTR_ENTITY_ID: FRONT, "low": 60, "high": 40},
             blocking=True,
         )

@@ -213,7 +213,7 @@ async def test_run_custom_and_adjust(client, fake):
     }
     await client.adjust(["Front"], speed=1, pattern_type="Paint")
     sent = json.loads(fake.sent_commands()[-1]["runPattern"]["data"])
-    assert sent["type"] == "Paint" and sent["runData"]["speed"] == 100
+    assert sent["type"] == "Paint" and sent["runData"]["speed"] == 40  # slowest that still moves
     assert sent["colors"] == [255, 0, 0, 0, 0, 255] and sent["runData"]["brightness"] == 80
 
 
@@ -270,6 +270,10 @@ def test_color_names():
     )
     assert describe_colors([0, 0, 0]) == "Custom Color"
     assert ui_speed_to_wire(100) == 1 and wire_speed_to_ui(1) == 100
+    assert ui_speed_to_wire(1) == 40 and wire_speed_to_ui(40) == 1
+    # Middle of the slider lands near the stock looks (wire 5-15), not frozen.
+    assert 5 <= ui_speed_to_wire(50) <= 8 and ui_speed_to_wire(30) <= 15
+    assert wire_speed_to_ui(75) == 1  # slower than we offer still reads as slowest
 
 
 async def test_delete_pattern(client, fake):

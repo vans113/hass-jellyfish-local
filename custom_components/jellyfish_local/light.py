@@ -14,30 +14,35 @@ from homeassistant.components.light import (
     LightEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 import voluptuous as vol
 
 from . import JellyFishConfigEntry
-from .client import ZoneState, running_label
+from .client import JellyFishError, ZoneState, running_label
 from .const import (
     ATTR_BRIGHTNESS_PCT,
     ATTR_COLORS,
     ATTR_DIRECTION,
     ATTR_EFFECT_BETWEEN,
     ATTR_FOLDER,
+    ATTR_HIGH,
+    ATTR_LOW,
     ATTR_NAME,
     ATTR_PATTERN,
     ATTR_PATTERN_TYPE,
+    ATTR_PERIOD,
     ATTR_SPACING,
     ATTR_SPEED,
     DEFAULT_SAVE_FOLDER,
     SERVICE_ADJUST_PATTERN,
     SERVICE_APPLY_LIGHT_STRING,
+    SERVICE_BREATHE,
     SERVICE_DELETE_PATTERN,
     SERVICE_RUN_PATTERN,
     SERVICE_SAVE_PATTERN,
+    SERVICE_STOP_BREATHE,
 )
 from .coordinator import JellyFishCoordinator
 from .entity import JellyFishEntity, JellyFishZoneEntity
@@ -73,6 +78,11 @@ _PATTERN_FIELDS = {
 COLORS_SCHEMA = vol.All(cv.ensure_list, [RGB_SCHEMA], vol.Length(min=1, max=MAX_COLORS))
 RUN_PATTERN_SCHEMA = {vol.Required(ATTR_COLORS): COLORS_SCHEMA, **_PATTERN_FIELDS}
 ADJUST_PATTERN_SCHEMA = {vol.Optional(ATTR_COLORS): COLORS_SCHEMA, **_PATTERN_FIELDS}
+BREATHE_SCHEMA = {
+    vol.Optional(ATTR_LOW, default=20): vol.All(vol.Coerce(int), vol.Range(min=1, max=99)),
+    vol.Optional(ATTR_HIGH): vol.All(vol.Coerce(int), vol.Range(min=2, max=100)),
+    vol.Optional(ATTR_PERIOD, default=9): vol.All(vol.Coerce(float), vol.Range(min=2, max=120)),
+}
 DELETE_PATTERN_SCHEMA = {
     vol.Required(ATTR_PATTERN): vol.All(cv.string, vol.Length(min=3)),
 }
@@ -134,6 +144,8 @@ async def async_setup_entry(
     platform.async_register_entity_service(
         SERVICE_DELETE_PATTERN, DELETE_PATTERN_SCHEMA, "async_delete_pattern"
     )
+    platform.async_register_entity_service(SERVICE_BREATHE, BREATHE_SCHEMA, "async_breathe")
+    platform.async_register_entity_service(SERVICE_STOP_BREATHE, {}, "async_stop_breathe")
 
 
 class _JellyFishLight(LightEntity):
@@ -160,6 +172,10 @@ class _JellyFishLight(LightEntity):
 
     @property
     def brightness(self) -> int | None:
+        # While breathing, report the top of the breath so the slider holds
+        # still and HA doesn't record a state change on every step.
+        if breathing := self.coordinator.breathing_for(self._zones):
+            return to_ha(breathing["high"])
         values = [s.brightness for s in self._states if s.is_on and s.brightness is not None]
         return to_ha(max(values)) if values else None
 
@@ -192,6 +208,8 @@ class _JellyFishLight(LightEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         states = self._states
         attrs: dict[str, Any] = {"zones": list(self._zones)}
+        if breathing := self.coordinator.breathing_for(self._zones):
+            attrs["breathing"] = {k: breathing[k] for k in ("low", "high", "period")}
         # Pick a representative zone to describe. For a single-zone light that's
         # the zone itself; for the "All zones" light, use the shared look when
         # every lit zone is playing the same thing, so the card can still draw
@@ -331,6 +349,23 @@ class _JellyFishLight(LightEntity):
     async def async_delete_pattern(self, pattern: str) -> None:
         """Delete a saved (non-factory) pattern from the controller."""
         await self._command(self.coordinator.async_delete_pattern(pattern))
+
+    async def async_breathe(
+        self, low: int = 20, high: int | None = None, period: float = 9
+    ) -> None:
+        """Ramp the brightness of whatever is playing between low and high."""
+        if high is None:
+            high = to_percent(self.brightness) if self.is_on and self.brightness else 50
+        try:
+            await self.coordinator.async_start_breathe(self._zones, low, high, period)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+        except JellyFishError as err:
+            raise HomeAssistantError(f"JellyFish controller error: {err}") from err
+
+    async def async_stop_breathe(self) -> None:
+        """Stop breathing and settle on the top brightness."""
+        await self.coordinator.async_stop_breathe(restore=True)
 
 
 class JellyFishZoneLight(_JellyFishLight, JellyFishZoneEntity):

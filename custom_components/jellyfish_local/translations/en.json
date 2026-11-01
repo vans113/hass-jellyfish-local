@@ -168,6 +168,28 @@
           "description": "Pattern to delete, as Folder/Name (for example Custom/Purple + Orange)."
         }
       }
+    },
+    "breathe": {
+      "name": "Breathe",
+      "description": "Slowly ramp the brightness of whatever is playing down and back up, like breathing. Any other command (a look, brightness, off) stops it.",
+      "fields": {
+        "low": {
+          "name": "Lowest brightness",
+          "description": "Bottom of the breath, in percent."
+        },
+        "high": {
+          "name": "Highest brightness",
+          "description": "Top of the breath, in percent (default: the current brightness)."
+        },
+        "period": {
+          "name": "Breath length",
+          "description": "Seconds for one full breath, down and back up."
+        }
+      }
+    },
+    "stop_breathe": {
+      "name": "Stop breathing",
+      "description": "Stop breathing and settle on the top brightness."
     }
   }
 }

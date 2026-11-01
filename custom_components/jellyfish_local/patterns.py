@@ -6,6 +6,7 @@ No Home Assistant imports, so it can be unit-tested on its own.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+import math
 from typing import Any
 
 # Effect types the controller understands (from the JellyFish API docs).
@@ -39,20 +40,28 @@ STOCK_FOLDERS = frozenset(
     }
 )
 
-# Speed on the wire: 1 is fastest, bigger is slower. Users get the opposite
-# (1 = slowest, 100 = fastest) because that's what a slider should mean.
+# Speed on the wire: the controller waits about 1/x per step, so 1 is fastest
+# and 100 barely creeps (a chase at 60+ looks frozen from the street). Users get
+# 1 = slowest .. 100 = fastest, spread on a curve over 1..SLOWEST_WIRE so every
+# part of the slider visibly moves and the middle lands where the stock looks
+# sit (about 5-15).
 SPEED_MIN, SPEED_MAX = 1, 100
+SLOWEST_WIRE = 40
+_LOG_SLOWEST = math.log(SLOWEST_WIRE)
 
 
 def ui_speed_to_wire(ui: int) -> int:
     ui = max(SPEED_MIN, min(SPEED_MAX, int(ui)))
-    return SPEED_MAX + SPEED_MIN - ui
+    frac = (SPEED_MAX - ui) / (SPEED_MAX - SPEED_MIN)
+    return max(1, round(SLOWEST_WIRE**frac))
 
 
 def wire_speed_to_ui(wire: int | None) -> int | None:
     if wire is None or wire <= 0:
         return None
-    return max(SPEED_MIN, min(SPEED_MAX, SPEED_MAX + SPEED_MIN - int(wire)))
+    frac = math.log(int(wire)) / _LOG_SLOWEST
+    ui = round(SPEED_MAX - frac * (SPEED_MAX - SPEED_MIN))
+    return max(SPEED_MIN, min(SPEED_MAX, ui))
 
 
 def check_rgb(rgb: Iterable[int]) -> list[int]:

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Iterable
+import contextlib
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
@@ -40,6 +43,9 @@ class JellyFishCoordinator(DataUpdateCoordinator[ControllerData]):
         self._known_zones: set[str] = set()
         self._paused = False
         self._fetching_configs = False
+        self._breathe_task: asyncio.Task | None = None
+        # {"zones": [...], "low": 20, "high": 50, "period": 9.0} while breathing
+        self.breathing: dict[str, Any] | None = None
         self._remove_listener = client.add_listener(self._handle_client_event)
 
     @property
@@ -106,8 +112,64 @@ class JellyFishCoordinator(DataUpdateCoordinator[ControllerData]):
         self.async_set_updated_data(self.client.data)
         return favorites
 
+    # ------------------------------------------------------------------ #
+    # Breathe: Home Assistant ramps the brightness of whatever is playing up
+    # and down. The controller can't fade a whole zone by itself, so the
+    # loop sends small steps; any other command stops it.
+    def breathing_for(self, zones: Iterable[str]) -> dict[str, Any] | None:
+        """The breathe settings if any of these zones is breathing."""
+        if self.breathing and set(zones) & set(self.breathing["zones"]):
+            return self.breathing
+        return None
+
+    async def async_start_breathe(
+        self, zones: list[str], low: int, high: int, period: float
+    ) -> None:
+        if not 1 <= low < high <= 100:
+            raise ValueError("Breathe needs 1 <= low < high <= 100")
+        if period < 2:
+            raise ValueError("One breath must take at least 2 seconds")
+        await self.async_stop_breathe(restore=False)
+        await self.client.set_brightness(high, zones)
+        self.breathing = {"zones": list(zones), "low": low, "high": high, "period": period}
+        self._breathe_task = self.config_entry.async_create_background_task(
+            self.hass, self._breathe(list(zones), low, high, period), "jellyfish_local breathe"
+        )
+        self.async_set_updated_data(self.client.data)
+
+    async def async_stop_breathe(self, restore: bool = True) -> bool:
+        """Stop breathing; with restore, settle back on the top brightness."""
+        task, info = self._breathe_task, self.breathing
+        self._breathe_task, self.breathing = None, None
+        if task is None:
+            return False
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        if restore and info:
+            with contextlib.suppress(JellyFishError):
+                await self.client.set_brightness(info["high"], info["zones"])
+        self.async_set_updated_data(self.client.data)
+        return True
+
+    async def _breathe(self, zones: list[str], low: int, high: int, period: float) -> None:
+        steps = max(1, round((high - low) / 2))
+        levels = [round(high - (high - low) * i / steps) for i in range(1, steps + 1)]
+        levels += [round(low + (high - low) * i / steps) for i in range(1, steps + 1)]
+        delay = max(0.15, period / len(levels))
+        try:
+            while True:
+                for level in levels:
+                    await self.client.set_brightness(level, zones)
+                    await asyncio.sleep(delay)
+        except JellyFishError as err:
+            LOGGER.warning("Stopped breathing: %s", err)
+            self._breathe_task, self.breathing = None, None
+            self.async_set_updated_data(self.client.data)
+
     async def async_shutdown(self) -> None:
         """Close the websocket; the controller only allows one."""
+        await self.async_stop_breathe(restore=False)
         await super().async_shutdown()
         self._remove_listener()
         await self.client.disconnect()

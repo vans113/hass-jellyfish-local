@@ -38,7 +38,12 @@ class JellyFishEntity(CoordinatorEntity[JellyFishCoordinator]):
         return super().available and self.coordinator.client.connected
 
     async def _command(self, action: Awaitable[T]) -> T:
-        """Run a client call, translate errors, and publish the new state."""
+        """Run a client call, translate errors, and publish the new state.
+
+        Any command stops a running breathe first, so picking a look, moving
+        brightness or turning the lights off always wins.
+        """
+        await self.coordinator.async_stop_breathe(restore=False)
         try:
             result = await action
         except ValueError as err:

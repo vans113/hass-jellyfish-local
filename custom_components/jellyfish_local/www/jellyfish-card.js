@@ -14,7 +14,7 @@
  *                                      #   (stock patterns can never be deleted)
  *   palette_folder: Colors             # optional: folder whose solid colors fill the palette
  */
-const VERSION = "0.5.2";
+const VERSION = "0.6.0";
 
 // Used only when the controller's Colors folder isn't available.
 const PALETTE = [
@@ -32,6 +32,35 @@ const hsl = (hex) => {
   const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [(h * 60 + 360) % 360, sat, l];
 };
+// "1 on 3 off" style looks: each lit color followed by the same number of
+// unlit bulbs. Returns [litColors, gap], or null when the list isn't like that.
+function splitGap(colors) {
+  if (!colors.length || !lit(colors[0])) return null;
+  const litOnes = [];
+  let gap = -1;
+  let i = 0;
+  while (i < colors.length) {
+    if (!lit(colors[i])) return null;
+    litOnes.push(colors[i]);
+    let n = 0;
+    i++;
+    while (i < colors.length && !lit(colors[i])) { n++; i++; }
+    if (gap === -1) gap = n;
+    else if (n !== gap) return null;
+  }
+  return gap > 0 ? [litOnes, gap] : null;
+}
+
+function withGap(colors, gap) {
+  if (!gap) return colors.slice();
+  const out = [];
+  for (const c of colors) {
+    out.push(c);
+    for (let i = 0; i < gap; i++) out.push(OFF);
+  }
+  return out;
+}
+
 function hexToRgbRaw(h) {
   const v = h.replace("#", "");
   return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16));
@@ -106,7 +135,9 @@ class JellyFishCard extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     const st = this._state;
-    const sig = st ? `${st.state}|${st.attributes.effect}|${st.attributes.brightness}|${st.attributes.colors}` : "none";
+    const sig = st
+      ? `${st.state}|${st.attributes.effect}|${st.attributes.brightness}|${st.attributes.colors}|${JSON.stringify(st.attributes.breathing || null)}`
+      : "none";
     if (first || sig !== this._sig) {
       this._sig = sig;
       if (!this._dragging) this._render();
@@ -168,14 +199,19 @@ class JellyFishCard extends HTMLElement {
     const a = (this._state && this._state.attributes) || {};
     // Keep "off" spacers (they're part of looks like 1-on-3-off), but start
     // from warm white if nothing is actually lit.
-    const playing = (a.colors || []).slice(0, this._maxColors());
+    let playing = (a.colors || []).slice(0, this._maxColors());
+    // Gaps are unlit bulbs in the color list (that's how the stock "1 On 3 Off"
+    // looks do it), so turn an even pattern of them back into the gap setting.
+    let gap = 0;
+    const split = splitGap(playing);
+    if (split) [playing, gap] = split;
     const colors = playing.some(lit) ? playing : [];
     this._draft = {
       colors: colors.length ? colors : ["#ffbe6e"],
       type: a.pattern_type && TYPE_HELP[a.pattern_type] ? a.pattern_type : "Color",
       speed: a.speed || 50,
       direction: a.direction && a.direction !== "" ? a.direction : "Center",
-      spacing: Number.isFinite(a.spacing) ? a.spacing : 2,
+      gap,
       saving: false,
       name: "",
       editing: null,
@@ -197,6 +233,18 @@ class JellyFishCard extends HTMLElement {
     const v = t.dataset.v;
     const d = this._draft;
     switch (act) {
+      case "breathe": {
+        const st = this._state;
+        const a = (st && st.attributes) || {};
+        if (a.breathing) {
+          this._call("jellyfish_local", "stop_breathe");
+        } else {
+          // Breathe down from where it is now to 40% of that, about a 9 s breath.
+          const high = a.brightness ? Math.max(5, Math.round((a.brightness * 100) / 255)) : 50;
+          this._call("jellyfish_local", "breathe", { high, low: Math.max(2, Math.round(high * 0.4)), period: 9 });
+        }
+        break;
+      }
       case "power":
         this._call("light", "toggle");
         break;
@@ -238,7 +286,8 @@ class JellyFishCard extends HTMLElement {
         this._render();
         break;
       case "add":
-        if (d.colors.length < this._maxColors()) d.colors.push(v || "#ffffff");
+        if (this._fits(d.colors.length + 1, d.gap)) d.colors.push(v || "#ffffff");
+        else this._toast("No room for another color with this gap");
         this._render();
         break;
       case "type":
@@ -249,12 +298,15 @@ class JellyFishCard extends HTMLElement {
         d.direction = v;
         this._render();
         break;
-      case "spacing":
-        d.spacing = Math.max(0, Math.min(50, d.spacing + Number(v)));
+      case "spacing": {
+        const next = Math.max(0, d.gap + Number(v));
+        if (this._fits(d.colors.length, next)) d.gap = next;
+        else this._toast("That's the biggest gap that fits these colors");
         this._render();
         break;
+      }
       case "any":
-        if (d.colors.length < this._maxColors()) {
+        if (this._fits(d.colors.length + 1, d.gap)) {
           d.colors.push("#ffffff");
           d.editing = d.colors.length - 1;
           this._render();
@@ -329,7 +381,7 @@ class JellyFishCard extends HTMLElement {
 
   _payload() {
     const d = this._draft;
-    const data = { colors: d.colors.map(hexToRgb), pattern_type: d.type, direction: d.direction, spacing: d.spacing };
+    const data = { colors: withGap(d.colors, d.gap).map(hexToRgb), pattern_type: d.type, direction: d.direction };
     if (d.type !== "Color") data.speed = d.speed;
     return data;
   }
@@ -422,7 +474,14 @@ class JellyFishCard extends HTMLElement {
     const effect = a.effect && a.effect !== "off" ? a.effect : null;
     const colors = (a.colors || []).length ? a.colors : a.rgb_color ? [rgbToHex(...a.rgb_color)] : [];
     const look = effect ? effect.split("/").pop() : colors.length ? "Solid color" : "";
-    const status = unavailable ? "Controller offline" : on ? `${look}${look ? ", " : ""}${pct}%` : "Off";
+    const breathing = on && a.breathing ? a.breathing : null;
+    const status = unavailable
+      ? "Controller offline"
+      : !on
+        ? "Off"
+        : breathing
+          ? `${look}${look ? ", " : ""}breathing ${breathing.low}–${breathing.high}%`
+          : `${look}${look ? ", " : ""}${pct}%`;
     const motion = on && a.pattern_type && a.pattern_type !== "Color" ? a.pattern_type.toLowerCase() : "";
     // A speed slider on the main card, shown only when an animated look is
     // playing (hidden for solid colors, which have no speed).
@@ -468,6 +527,15 @@ class JellyFishCard extends HTMLElement {
           <input id="live-speed" type="range" min="1" max="100" value="${spd}" aria-label="Speed">
           <span id="live-speed-val">${this._speedWord(spd)}</span>
         </label>`
+            : ""
+        }
+        ${
+          on && !unavailable
+            ? `<div class="effects">
+          <button class="chip ${breathing ? "sel" : ""}" data-act="breathe" aria-pressed="${!!breathing}">
+            <ha-icon icon="mdi:weather-windy"></ha-icon>${breathing ? "Stop breathing" : "Breathe"}
+          </button>
+        </div>`
             : ""
         }
         <div class="tabs" role="tablist">
@@ -649,6 +717,11 @@ class JellyFishCard extends HTMLElement {
     return (this._catalog && this._catalog.max_colors) || 30;
   }
 
+  // The controller takes 30 colors, and every gap bulb counts as one.
+  _fits(count, gap) {
+    return count * (1 + gap) <= this._maxColors();
+  }
+
   _palette() {
     // The controller's own named solid colors (the app's Colors folder), so the
     // card offers the same shades as the JellyFish app. Whites first, then by hue.
@@ -696,7 +769,7 @@ class JellyFishCard extends HTMLElement {
       .join("");
     const max = this._maxColors();
     const add =
-      d.colors.length < max
+      this._fits(d.colors.length + 1, d.gap)
         ? `<div class="palette" aria-label="Add a color">${this._palette()
             .map(
               ([c, n]) =>
@@ -706,7 +779,9 @@ class JellyFishCard extends HTMLElement {
             <button class="swatch off" style="--c:${OFF}" data-act="add" data-v="${OFF}" aria-label="Add a gap (off)" title="Off (gap)"></button>
             <button class="swatch any" data-act="any" aria-label="Any color" title="Any color…"></button>
           </div>`
-        : `<p class="hint">That's the most colors the controller can use in one look (${max}).</p>`;
+        : d.gap
+          ? `<p class="hint">No room for more colors with this gap — the controller takes ${max} bulbs per look, unlit ones included. Make the gap smaller to add more.</p>`
+          : `<p class="hint">That's the most colors the controller can use in one look (${max}).</p>`;
     const types = Object.keys(TYPE_HELP)
       .map(
         (t) =>
@@ -731,8 +806,8 @@ class JellyFishCard extends HTMLElement {
           <button class="btn" data-act="save-start">Save as a look…</button>
         </div>`;
     return `<div class="create">
-        <div class="preview">${this._string(d.colors, { count: 24, cls: "glow", motion: moving ? d.type.toLowerCase() : "" })}</div>
-        <div class="row-head"><span>Colors <span class="sub">${d.colors.length} of ${max}</span></span><button class="link" data-act="from-current">Start from what's on</button></div>
+        <div class="preview">${this._string(withGap(d.colors, d.gap), { count: 24, cls: "glow", motion: moving ? d.type.toLowerCase() : "" })}</div>
+        <div class="row-head"><span>Colors <span class="sub">${withGap(d.colors, d.gap).length} of ${max}</span></span><button class="link" data-act="from-current">Start from what's on</button></div>
         <div class="slots">${slots}</div>
         ${add}
         <div class="row-head"><span>Movement</span><span class="sub">${esc(TYPE_HELP[d.type])}</span></div>
@@ -743,8 +818,8 @@ class JellyFishCard extends HTMLElement {
                <div class="chips">${dirs}</div>`
             : ""
         }
-        <div class="spacing"><span>Gap between colors</span>
-          <span class="stepper"><button data-act="spacing" data-v="-1" aria-label="Less gap">−</button><b>${d.spacing}</b><button data-act="spacing" data-v="1" aria-label="More gap">+</button></span>
+        <div class="spacing"><span>Unlit bulbs between colors</span>
+          <span class="stepper"><button data-act="spacing" data-v="-1" aria-label="Less gap">−</button><b>${d.gap}</b><button data-act="spacing" data-v="1" aria-label="More gap">+</button></span>
         </div>
         ${save}
       </div>`;
@@ -791,6 +866,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--primary-col
 .zones { display: flex; gap: 8px; padding: 0 16px 8px; flex-wrap: wrap; }
 .bright { display: flex; align-items: center; gap: 10px; padding: 4px 16px 12px; color: var(--secondary-text-color); }
 .bright input, .speed input { flex: 1; accent-color: var(--primary-color); min-height: 28px; }
+.effects { display: flex; gap: 8px; padding: 0 16px 12px; }
+.effects .chip { display: inline-flex; align-items: center; gap: 6px; }
+.effects ha-icon { --mdc-icon-size: 18px; }
 #bright-val { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--primary-text-color); }
 #live-speed-val { width: 4.5em; text-align: right; color: var(--secondary-text-color); }
 
