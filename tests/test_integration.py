@@ -23,9 +23,9 @@ from homeassistant.const import (
     STATE_ON,
     STATE_UNAVAILABLE,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import ServiceValidationError, Unauthorized
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 import pytest
@@ -758,3 +758,29 @@ async def test_stop_breathe_restores_top_brightness(
             {ATTR_ENTITY_ID: FRONT, "low": 60, "high": 40},
             blocking=True,
         )
+
+
+async def test_delete_pattern_needs_admin(
+    hass: HomeAssistant, setup, hass_ws_client, hass_admin_user, fake: FakeController
+) -> None:
+    hass_admin_user.groups = []  # now an ordinary (non-admin) user
+    ws = await hass_ws_client(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": "jellyfish_local/delete_pattern",
+            "entity_id": FRONT,
+            "pattern": "Everyday/Warm White",
+        }
+    )
+    res = await ws.receive_json()
+    assert not res["success"] and res["error"]["code"] == "unauthorized"
+    with pytest.raises(Unauthorized):
+        await hass.services.async_call(
+            DOMAIN,
+            "delete_pattern",
+            {ATTR_ENTITY_ID: FRONT, "pattern": "Everyday/Warm White"},
+            blocking=True,
+            context=Context(user_id=hass_admin_user.id),
+        )
+    assert "Everyday/Warm White" in fake.pattern_configs

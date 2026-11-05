@@ -14,7 +14,7 @@
  *                                      #   (stock patterns can never be deleted)
  *   palette_folder: Colors             # optional: folder whose solid colors fill the palette
  */
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 
 // Used only when the controller's Colors folder isn't available.
 const PALETTE = [
@@ -580,6 +580,8 @@ class JellyFishCard extends HTMLElement {
   _canDelete(p) {
     // The integration decides: only looks people saved, never stock patterns.
     if (!p || !(p.deletable ?? false)) return false;
+    // Deleting changes the controller itself, so Home Assistant only lets admins do it.
+    if (!(this._hass && this._hass.user && this._hass.user.is_admin)) return false;
     const only = this._config.delete_folders;
     return !only || only.includes(p.key.slice(0, p.key.lastIndexOf("/")));
   }

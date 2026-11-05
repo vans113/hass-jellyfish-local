@@ -121,11 +121,12 @@ async def ws_set_favorites(
         vol.Required("pattern"): str,
     }
 )
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_delete_pattern(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
-    """Delete a saved pattern from the controller (the card's hold-to-delete)."""
+    """Delete a saved pattern from the controller (the card's hold-to-delete). Admins only."""
     coordinator = _coordinator_for(hass, msg["entity_id"])
     if coordinator is None:
         connection.send_error(msg["id"], "not_found", "No JellyFish controller for that entity")

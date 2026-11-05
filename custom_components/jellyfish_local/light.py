@@ -14,7 +14,7 @@ from homeassistant.components.light import (
     LightEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 import voluptuous as vol
@@ -347,7 +347,15 @@ class _JellyFishLight(LightEntity):
         await self._command(self.coordinator.client.save_running(name, folder, self._zones[0]))
 
     async def async_delete_pattern(self, pattern: str) -> None:
-        """Delete a saved (non-factory) pattern from the controller."""
+        """Delete a saved (non-factory) pattern from the controller.
+
+        Admins only when a person calls it; automations and scripts (no user) may.
+        """
+        user_id = self._context.user_id if self._context else None
+        if user_id is not None:
+            user = await self.hass.auth.async_get_user(user_id)
+            if user is None or not user.is_admin:
+                raise Unauthorized(context=self._context)
         await self._command(self.coordinator.async_delete_pattern(pattern))
 
     async def async_breathe(
